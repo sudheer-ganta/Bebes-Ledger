@@ -373,3 +373,19 @@ export const clearHistory: Mut = (s) => {
     expenses: s.expenses.filter((e) => !(e.source === 'meal' && e.refId && mealIds.has(e.refId))),
   })
 }
+
+/** Replace today's water log with a single entry for the given total (0 clears it). */
+export const setWaterTotal = (date: ISODate, ml: number): Mut =>
+  patchDay(date, (d) => ({
+    ...d, water: ml > 0 ? [{ id: uid(), ml: Math.round(ml), label: 'Set total', t: nowISO() }] : [],
+  }))
+
+export const clearWater = (date: ISODate): Mut => patchDay(date, (d) => ({ ...d, water: [] }))
+
+/** Zero the manual steps and untick the habits that grant step credit (the gym walk). */
+export const clearSteps = (date: ISODate, creditHabitIds: string[]): Mut =>
+  patchDay(date, (d) => {
+    const habits = { ...d.habits }
+    for (const id of creditHabitIds) delete habits[id]
+    return { ...d, extraSteps: 0, habits }
+  })

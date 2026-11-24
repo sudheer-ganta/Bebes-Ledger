@@ -37,6 +37,10 @@ npm run dev          # frontend + API together (API needs MongoDB, see below)
 
 A **crisis radar** on Today opens the right flow automatically when the pool runs low, no meal is logged by 2 PM, or a day looks derailed after 5 PM.
 
+## Chat bot (WhatsApp / Telegram)
+
+Send `@spent 120 auto`, `@water 500`, `@task buy soap tomorrow`, `@today`… from WhatsApp or Telegram and the app updates. Setup and the full command list are in **[BOT.md](BOT.md)** (needs the online deploy first).
+
 ## Salary: nothing is allocated until it actually lands
 
 The app starts in **Waiting for salary**: pool ₹0, no daily limit, no overdue bills or overspend alerts, just a countdown to payday and a preview of the plan. When your pay arrives (the 7th), tap **My salary has arrived**, enter the real amount and date, check the allocation preview, and confirm. Only then does the month start.

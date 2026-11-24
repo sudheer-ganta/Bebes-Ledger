@@ -5,7 +5,9 @@ import cors from 'cors'
 import express, { type NextFunction, type Request, type Response } from 'express'
 import helmet from 'helmet'
 import mongoose from 'mongoose'
-import { env } from './env.js'
+import { bots, env } from './env.js'
+import { loadSnapshot, saveSnapshot, type Snapshot } from './state.js'
+import { botRouter, makeSenders } from './bot/webhooks.js'
 import { api } from './routes.js'
 
 const app = express()
@@ -13,8 +15,20 @@ app.disable('x-powered-by')
 // helmet's default CSP adds upgrade-insecure-requests, which breaks plain-http use on a home network
 app.use(helmet({ contentSecurityPolicy: { directives: { 'upgrade-insecure-requests': null } } }))
 app.use(cors({ origin: env.corsOrigins }))
-app.use(express.json({ limit: '5mb' }))
+// keep the raw bytes: Meta signs the exact body, and the signature check needs them
+app.use(express.json({ limit: '5mb', verify: (req, _res, buf) => { (req as unknown as { rawBody: Buffer }).rawBody = buf } }))
 app.use('/api', api)
+
+// Chat bots (WhatsApp / Telegram). Mounted outside /api because Meta and Telegram can't send our API key;
+// they are protected by request signatures / a secret header plus an allowlist of your own number.
+if (bots.whatsapp || bots.telegram) {
+  app.use('/webhook', botRouter(bots, {
+    load: loadSnapshot,
+    save: (s) => saveSnapshot(s as unknown as Snapshot),
+    ...makeSenders(bots),
+  }))
+  console.log(`Bots enabled: ${[bots.whatsapp && 'WhatsApp', bots.telegram && 'Telegram'].filter(Boolean).join(', ')}`)
+}
 
 app.use('/api', (_req, res) => {
   res.status(404).json({ error: 'Unknown API route' })

@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Check, Droplets, Flame, Footprints, Undo2, UtensilsCrossed } from 'lucide-react'
-import { Badge, Btn, Chip, Field, inputCls, Progress, Ring, Sheet } from './ui'
+import { Badge, Btn, Chip, ConfirmButton, Field, inputCls, Progress, Ring, Sheet } from './ui'
 import { useApp } from '../lib/store'
 import {
-  addMeal, addSteps, addWater, removeLastWater, setExtraSteps, toggleHabit, type Mut,
+  addMeal, addSteps, addWater, clearSteps, clearWater, removeLastWater, setExtraSteps, setWaterTotal, toggleHabit, type Mut,
 } from '../lib/actions'
 import { dayStats, dayCounts, getDayLog } from '../lib/day'
 import { APPLIANCES, MEAL_SLOTS } from '../lib/defaults'
@@ -22,6 +22,7 @@ const WATER_BUTTONS = [
 
 export function WaterTracker({ compact }: { compact?: boolean }) {
   const { state, update, today, toast } = useApp()
+  const [setMl, setSetMl] = useState('')
   const st = dayStats(state, today)
   const log = getDayLog(state, today)
   const glasses = Math.ceil(st.waterTarget / state.targets.glassMl)
@@ -62,13 +63,36 @@ export function WaterTracker({ compact }: { compact?: boolean }) {
           </Btn>
         ))}
       </div>
-      {!compact && log.water.length > 0 && (
-        <div className="flex items-center justify-between text-xs text-slate-500">
-          <span>{log.water.length} drinks logged today</span>
-          <button className="inline-flex items-center gap-1 hover:text-slate-800" onClick={() => update(removeLastWater(today))}>
-            <Undo2 size={12} /> Undo last
-          </button>
-        </div>
+      {!compact && (
+        <>
+          <form
+            className="flex gap-2"
+            onSubmit={(e) => {
+              e.preventDefault()
+              const n = Number(setMl)
+              if (!Number.isFinite(n) || n < 0 || setMl === '') return
+              update(setWaterTotal(today, n))
+              setSetMl('')
+            }}
+          >
+            <input
+              className={inputCls} inputMode="numeric" type="number" min={0} value={setMl}
+              onChange={(e) => setSetMl(e.target.value)} placeholder="Set today's total in ml (e.g. 2000)"
+            />
+            <Btn type="submit" variant="soft">Set</Btn>
+          </form>
+          <div className="flex items-center justify-between text-xs text-slate-500">
+            <span>{log.water.length} drink{log.water.length === 1 ? '' : 's'} logged today</span>
+            <span className="flex items-center gap-2">
+              {log.water.length > 0 && (
+                <button className="inline-flex items-center gap-1 hover:text-slate-800" onClick={() => update(removeLastWater(today))}>
+                  <Undo2 size={12} /> Undo last
+                </button>
+              )}
+              <ConfirmButton label="Reset water" confirmLabel="Yes, reset" disabled={log.water.length === 0} onConfirm={() => { update(clearWater(today)); toast('Water reset to 0', 'info') }} />
+            </span>
+          </div>
+        </>
       )}
     </div>
   )
@@ -77,7 +101,7 @@ export function WaterTracker({ compact }: { compact?: boolean }) {
 // ---------- steps ----------
 
 export function StepTracker({ compact }: { compact?: boolean }) {
-  const { state, update, today } = useApp()
+  const { state, update, today, toast } = useApp()
   const st = dayStats(state, today)
   const log = getDayLog(state, today)
   const walk = state.habits.find((h) => h.stepCredit)
@@ -135,6 +159,15 @@ export function StepTracker({ compact }: { compact?: boolean }) {
           />
           <Btn type="submit" variant="soft">Set</Btn>
         </form>
+      )}
+      {!compact && (
+        <div className="flex justify-end">
+          <ConfirmButton
+            label="Reset steps" confirmLabel="Yes, reset"
+            disabled={st.steps === 0}
+            onConfirm={() => { update(clearSteps(today, state.habits.filter((h) => h.stepCredit).map((h) => h.id))); toast('Steps reset to 0', 'info') }}
+          />
+        </div>
       )}
     </div>
   )
