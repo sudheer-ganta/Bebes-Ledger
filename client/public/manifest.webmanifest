@@ -1,0 +1,12 @@
+{
+  "name": "Life OS",
+  "short_name": "Life OS",
+  "description": "Personal budget, food, fitness and daily-crisis companion",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FAFAFA",
+  "theme_color": "#FAFAFA",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

@@ -1,0 +1,19 @@
+# Render Blueprint: one web service that runs the API and serves the built app.
+# Render → New → Blueprint → pick the GitHub repo. You'll be asked for the two secrets below.
+services:
+  - type: web
+    name: life-os
+    runtime: node
+    plan: free
+    buildCommand: npm --prefix client install --include=dev && npm --prefix client run build && npm --prefix server install
+    startCommand: npm --prefix server start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      - key: NODE_ENV
+        value: production
+      - key: MONGODB_URI # your Atlas connection string, e.g. mongodb+srv://user:pass@cluster0.xxxx.mongodb.net/life-os
+        sync: false
+      - key: API_KEY # a long random string (16+ chars); you type the same one into the app's Settings
+        sync: false
