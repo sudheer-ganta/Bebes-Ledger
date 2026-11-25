@@ -170,6 +170,69 @@ async function transcribeWhatsAppAudio(mediaId: string, apiVersion: string, waTo
   return text || ''
 }
 
+async function analyzeWhatsAppImage(
+  mediaId: string,
+  apiVersion: string,
+  waToken: string,
+  geminiKey: string,
+  caption?: string
+): Promise<string> {
+  const metaRes = await fetch(`https://graph.facebook.com/${apiVersion}/${mediaId}`, {
+    headers: { Authorization: `Bearer ${waToken}` },
+  })
+  if (!metaRes.ok) throw new Error(`Meta media metadata error: ${metaRes.status}`)
+  const metaJson = (await metaRes.json()) as { url: string; mime_type?: string }
+
+  const fileRes = await fetch(metaJson.url, {
+    headers: { Authorization: `Bearer ${waToken}` },
+  })
+  if (!fileRes.ok) throw new Error(`Meta media download error: ${fileRes.status}`)
+  const buf = await fileRes.arrayBuffer()
+  const base64Img = Buffer.from(buf).toString('base64')
+  const mimeType = metaJson.mime_type || 'image/jpeg'
+
+  const prompt = [
+    'Analyze this image sent to an expense tracker bot.',
+    'It could be a bill, restaurant receipt, UPI payment screenshot (Google Pay, PhonePe, Paytm), or grocery slip.',
+    caption ? `The user also sent this caption: "${caption}"` : '',
+    'Find the total amount paid in Rupees and what it was for (Merchant, store, food, ride, veg, etc.).',
+    'Return ONLY a short command formatted as: "<amount> <short item/merchant name>" (e.g. "240 Swiggy" or "150 veg" or "35 chai").',
+    'If you cannot find any payment or expense amount in the image, reply with "CANNOT_READ".',
+  ]
+    .filter(Boolean)
+    .join('\n')
+
+  const geminiRes = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [
+          {
+            parts: [
+              {
+                inlineData: {
+                  mimeType,
+                  data: base64Img,
+                },
+              },
+              { text: prompt },
+            ],
+          },
+        ],
+      }),
+    }
+  )
+
+  if (!geminiRes.ok) {
+    throw new Error(`Gemini image error: ${geminiRes.status} ${await geminiRes.text()}`)
+  }
+  const resJson = (await geminiRes.json()) as any
+  const text = resJson.candidates?.[0]?.content?.parts?.[0]?.text?.trim()
+  return text || 'CANNOT_READ'
+}
+
 export const botDiagnostics = {
   lastIncoming: null as any,
   lastOutgoing: null as any,
@@ -207,7 +270,7 @@ export function botRouter(cfg: BotConfig, deps: BotDeps): Router {
       res.sendStatus(200) // answer fast; Meta retries if we are slow
       const messages =
         (req.body?.entry ?? []).flatMap((e: any) => (e.changes ?? []).flatMap((c: any) => c.value?.messages ?? [])) as Array<{
-          id: string; from: string; type: string; text?: { body: string }; audio?: { id: string; mime_type?: string }
+          id: string; from: string; type: string; text?: { body: string }; audio?: { id: string; mime_type?: string }; image?: { id: string; mime_type?: string; caption?: string }
         }>
       botDiagnostics.lastIncoming = {
         at: new Date().toISOString(),
@@ -244,8 +307,29 @@ export function botRouter(cfg: BotConfig, deps: BotDeps): Router {
               }
             })()
           }
+        } else if (m.type === 'image' && m.image?.id) {
+          if (!deps.geminiKey) {
+            work = send(`Darling, I received your photograph, but my bifocals are missing! To enable receipt & bill scanning, add GEMINI_API_KEY to your Render environment variables. Send text for now!`)
+          } else {
+            work = (async () => {
+              try {
+                await deps.typingWhatsApp?.(m.id)
+                const command = await analyzeWhatsAppImage(m.image!.id, wa.apiVersion, wa.token, deps.geminiKey!, m.image?.caption)
+                if (!command || command === 'CANNOT_READ') {
+                  await send(`I examined your photograph, Sudheer, but found no legible bill or payment amount! Send a clearer picture or type the number.`)
+                  return
+                }
+                await replyLikeAPerson(command, deps, () => deps.typingWhatsApp?.(m.id), async (reply) => {
+                  await send(`🧾 Found in image: "${command}"\n\n${reply}`)
+                })
+              } catch (e) {
+                console.error('Image analysis failed', e)
+                await send(`My vision failed me, darling! I could not process that image. Type the amount for now!`)
+              }
+            })()
+          }
         } else {
-          work = send('I only understand text messages and voice notes for now. Send "help" to see what I can do.')
+          work = send('I only understand text messages, voice notes, and receipt photos for now. Send "help" to see what I can do.')
         }
         work.catch((e) => console.error('whatsapp bot error', e))
       }
