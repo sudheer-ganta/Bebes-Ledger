@@ -88,6 +88,17 @@ function progressBar(current: number, target: number, length = 8): string {
   return '█'.repeat(filled) + '░'.repeat(length - filled)
 }
 
+let lastFallbackIdx = -1
+function pickFallback(arr: string[]): string {
+  let idx = Math.floor(Math.random() * arr.length)
+  if (idx === lastFallbackIdx) idx = (idx + 1) % arr.length
+  lastFallbackIdx = idx
+  return arr[idx]
+}
+
+const spendToday = (s: AppState, date: string): number =>
+  s.expenses.filter((e) => e.date === date).reduce((acc, e) => acc + e.amount, 0)
+
 function moiraScoldOverspend(name: string, over: number): string {
   const quotes = [
     `😱 Over by ${fmt(over)}! You fussy little fucker, ${name}! Never let the bastards get you down.`,
@@ -113,23 +124,22 @@ function moiraPraiseThrift(name: string, left: number, limit: number, weekendPot
 function moiraExpenseReaction(name: string, amount: number): string {
   if (amount >= 1200) {
     return pick([
-      `👑 ${fmt(amount)}?! Are we financing a local production of Cabaret, ${name}? Stop acting like a disgruntled pelican!`,
-      `👑 ${fmt(amount)} vanished into the ether. You're giving me agita, ${name}. What you did was impulsive, capricious, and wrong.`,
-      `👑 ${fmt(amount)}?! I am incapable of dealing with this level of mediocrity, darling.`,
-      `👑 Gasp! ${fmt(amount)} gone. My wig cabinet trembled, ${name}!`,
+      `Are we financing a local production of Cabaret, ${name}? Stop acting like a disgruntled pelican!`,
+      `Vanished into the ether! You're giving me agita, ${name}. What you did was impulsive, capricious, and wrong.`,
+      `I am incapable of dealing with this level of mediocrity, darling.`,
     ])
   }
   if (amount >= 400) {
     return pick([
-      `🎭 ${fmt(amount)} logged. It’s a rare gift to strip vanity of its charm, ${name}, yet here you are.`,
-      `🎭 ${fmt(amount)}?! Fold in the cheese tomorrow, Bébé. You're bleeding us dry.`,
-      `🎭 Have I been let go? Because this ${fmt(amount)} is borderline offensive, ${name}.`,
+      `It’s a rare gift to strip vanity of its charm, ${name}, yet here you are.`,
+      `Fold in the cheese tomorrow, Bébé. You're bleeding us dry.`,
+      `Have I been let go? Because this is borderline offensive, ${name}.`,
     ])
   }
   return pick([
-    `✨ Logged ${fmt(amount)}. Try not to make poverty a lifestyle, ${name}.`,
-    `✨ ${fmt(amount)} recorded. Stop pettifogging over pennies and earn some real money.`,
-    `✨ Fine, ${fmt(amount)} noted. Don't look at me like that, ${name}.`,
+    `Try not to make poverty a lifestyle, ${name}.`,
+    `Stop pettifogging over pennies and earn some real money, ${name}.`,
+    `Fine, noted. Don't look at me like that, ${name}.`,
   ])
 }
 
@@ -144,10 +154,13 @@ function summary(s: AppState, now: Date): string {
 
   const lines = [`🎭 ${name} — ${dateStr}`]
   if (fv.pending) {
+    const plannedPerDay = Math.round(fv.plan.pocket / fv.cycle.totalDays)
+    const spent = spendToday(s, today)
+    const leftToday = plannedPerDay - spent
     lines.push(
-      fv.waitingFirst
-        ? `Awaiting your salary, ${name}. ${fv.cycle.daysToPayday}d to payday. Try not to starve.`
-        : `Coffers empty, ${name}! Tell me what you earn: salary 25160.`,
+      leftToday < 0
+        ? `😱 Over planned limit by ${fmt(-leftToday)}! You fussy little fucker, ${name}!`
+        : `💰 Plan: ${fmt(plannedPerDay)}/day (awaiting salary in ${fv.cycle.daysToPayday}d). Left today: ${fmt(leftToday)}.`
     )
   } else {
     const left = fv.todayLeft
@@ -246,8 +259,16 @@ function mealSuggestions(s: AppState, slot?: string): string {
 
 function limitLine(s: AppState, now: Date): string {
   const name = userName(s)
-  const fv = computeFinance(s, toISO(now))
-  if (fv.pending) return '(no pool yet: salary not entered)'
+  const today = toISO(now)
+  const fv = computeFinance(s, today)
+  if (fv.pending) {
+    const plannedPerDay = Math.round(fv.plan.pocket / fv.cycle.totalDays)
+    const spent = spendToday(s, today)
+    const left = plannedPerDay - spent
+    return left < 0
+      ? `😱 Over planned limit by ${fmt(-left)}! You fussy little fucker, ${name}! Never let the bastards get you down.`
+      : `✨ Left today: ${fmt(left)} of ${fmt(plannedPerDay)} (awaiting salary in ${fv.cycle.daysToPayday}d)`
+  }
   return fv.todayLeft < 0
     ? `😱 Over by ${fmt(-fv.todayLeft)}! You fussy little fucker, ${name}! Never let the bastards get you down.`
     : `✨ Left today: ${fmt(fv.todayLeft)} · Weekend Fund: ${fmt(Math.max(0, fv.lifestyle.left))}`
@@ -269,6 +290,32 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
   if (['help', '?', 'menu', 'start', '/start', '/help'].includes(cmd)) return noChange(HELP)
 
   // ---- Moira Conversational Easter Eggs & Greetings
+  if (/\b(morning|gm|good morrow|bon matin)\b/i.test(lower) || ['gm', 'morning'].includes(cmd)) {
+    const morningQuotes = [
+      `Morning, ${name}. Did we wake up in a worse tax bracket? That sweater looks like a cry for help. 🌅`,
+      `Bon matin, ${name}. Keep your voice down, my eyes are still adjusting to the glare of poverty. ☀️`,
+      `Top of the morning. Tell me you brewed something potable, I refuse to face you unmedicated. ☕`,
+    ]
+    return noChange(pick(morningQuotes))
+  }
+  if (lower.includes('did you sleep') || lower.includes('did u slept') || lower.includes('slept last night') || lower.includes('sleep last night')) {
+    return noChange(`Sleep? In this establishment, ${name}?! I was kept awake by the tragic acoustics and Johnny's fitful tossing. What do you want?`)
+  }
+  if (lower.includes('rude')) {
+    return noChange(`Rude? I am not rude, ${name}, I am an artist starved of glamour. Now what did you want?`)
+  }
+  if (lower.includes("didn't blow") || lower.includes("didnt blow") || lower.includes("haven't spent") || lower.includes("havent spent")) {
+    return noChange(`You didn't blow our money? Well, miracles never cease. Tell me what's left or confess your damage, ${name}.`)
+  }
+  if (['what', 'why', 'huh', 'what?', 'why?'].includes(cmd) && text.length <= 10) {
+    return noChange(`What do you mean "what", ${name}? Use your words, darling! Did we spend money or not?`)
+  }
+  if (['fine', 'ok', 'okay', 'k', 'sure', 'alright'].includes(cmd) && text.length <= 10) {
+    return noChange(`Good. Now hydrate and let me languish in peace, or tell me what you bought.`)
+  }
+  if (lower.includes('are you an ai') || lower.includes('are you ai') || lower.includes('are you a bot') || lower.includes('are you bot') || lower.includes('who are you')) {
+    return noChange(`An AI? A bot?! How dare you, ${name}! I am Moira Rose, award-winning actress of stage and screen, reduced to overseeing your dismal purse strings. Now log your pennies!`)
+  }
   if (['hi', 'hello', 'hey', 'heyy', 'hola'].includes(cmd)) {
     return noChange(`What do you want, ${name}? "I’m trying very hard not to connect with people right now." Confess your damage or let me languish in peace.`)
   }
@@ -283,16 +330,27 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
     ]
     return noChange(pick(nightQuotes))
   }
-  if (['gm', 'morning', 'goodmorning', 'good morning', 'bon matin'].includes(cmd) || lower.startsWith('good morning') || lower.startsWith('bon matin')) {
-    const morningQuotes = [
-      `Morning, ${name}. Did we wake up in a worse tax bracket? That sweater looks like a cry for help. 🌅`,
-      `Bon matin, ${name}. Keep your voice down, my eyes are still adjusting to the glare of poverty. ☀️`,
-      `Top of the morning. Tell me you brewed something potable, I refuse to face you unmedicated. ☕`,
-    ]
-    return noChange(pick(morningQuotes))
-  }
   if (['thanks', 'thank you', 'ty', 'thx'].includes(cmd)) {
     return noChange(`You're welcome, ${name}. Don't expect applause for the bare minimum.`)
+  }
+  if (lower.includes('budget') || lower.includes('how much') || lower.includes('can i spend') || lower.includes('allowance')) {
+    const fv = computeFinance(state, today)
+    const spentToday = spendToday(state, today)
+    if (fv.pending) {
+      const plannedPerDay = Math.round(fv.plan.pocket / fv.cycle.totalDays)
+      const leftToday = plannedPerDay - spentToday
+      return noChange(
+        leftToday < 0
+          ? `😱 Over planned limit by ${fmt(-leftToday)}, ${name}! Stop spending!`
+          : `💰 Plan is ${fmt(plannedPerDay)} a day. You have ${fmt(leftToday)} left today (awaiting salary in ${fv.cycle.daysToPayday}d). Try not to blow it on nonsense.`
+      )
+    }
+    const leftToday = fv.todayLeft
+    return noChange(
+      leftToday < 0
+        ? `😱 Over budget by ${fmt(-leftToday)}, ${name}! Stop spending!`
+        : `💰 Today's limit: ${fmt(fv.dailyLimit)}. Left today: ${fmt(leftToday)}. Try not to blow it on nonsense.`
+    )
   }
   if (lower.includes('how are you') || ['sup', 'wassup', 'whats up'].includes(cmd)) {
     return noChange(`I’m bedeviled with meetings and suffering from your financial choices, ${name}. What do you need?`)
@@ -389,7 +447,7 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
     const category = (tag && TAGS[tag]) || guessCategory(`${title} ${cmd}`)
     const next = A.addExpense({ amount, title: title || category, category, date: today })(state)
     const reaction = moiraExpenseReaction(name, amount)
-    return done(next, `${reaction}\nLogged ${fmt(amount)} for ${category}${title ? ` (${title})` : ''}.\n${limitLine(next, now)}`)
+    return done(next, `✨ Logged ${fmt(amount)} for ${category}${title ? ` (${title})` : ''}. ${reaction}\n${limitLine(next, now)}`)
   }
   if (isExpenseWord) return noChange(`How much lucre was surrendered, ${name}? Tell me the damage, darling!`)
 
@@ -518,6 +576,11 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
     `I would be pleased to RSVP as pending to whatever nonsense you're babbling about, ${name}.`,
     `You fussy little fucker, ${name}. Drink some water and tell me if you've ruined our budget today.`,
     `You're giving me agita, ${name}. Speak plainly or let me languish in peace.`,
+    `Gossip is the devil's telephone, ${name}. Did you spend lucre, or are you just testing my patience?`,
+    `I am suddenly overwhelmed by a wave of apathy, ${name}. Log an expense or go away.`,
+    `You are dripping with ennui, ${name}. Perambulate or confess your damage!`,
+    `Darling, I am incapable of doing anything with subtlety. Tell me what you need before I have an apoplexy.`,
+    `Look at you, ${name}. A walking cry for help. Drink some water and fold in the cheese.`,
   ]
-  return noChange(pick(chatFallbacks))
+  return noChange(pickFallback(chatFallbacks))
 }
