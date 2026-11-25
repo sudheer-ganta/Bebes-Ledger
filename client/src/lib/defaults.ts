@@ -234,7 +234,7 @@ export function makeDefaultState(): AppState {
       rent: 9500,
       fixed: 3000,
       savings: 5000,
-      paydayDay: 7,
+      paydayDay: 8,
       rentDueDay: 10,
       debtDueDay: 12,
       fixedDueDay: 15,

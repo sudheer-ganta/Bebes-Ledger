@@ -39,7 +39,7 @@ const say = (m: string) => { const r = runCommand(s, m, now, mem); s = r.state; 
 
 check(say('where did my money go this month').reply.includes('Outside Food: ₹300'), 'breakdown uses real expenses')
 check(say('is my rent paid').reply.includes('not paid'), 'rent status from data')
-check(/7 Dec/.test(say('when do i get my salary').reply), 'payday date from finance settings')
+check(/8 Dec/.test(say('when do i get my salary').reply), 'payday date from finance settings')
 check(say('what muscle tomorrow').reply.includes('Triceps'), 'gym plan for tomorrow (Thursday)')
 
 // 3) journal and mood from chat

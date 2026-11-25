@@ -4,11 +4,11 @@ import type { AppState, ExpenseCategory, MealSlot, Priority, TaskCategory, DayKe
 import * as A from '../../../client/src/lib/actions'
 import { addDays, fmtDate, toISO } from '../../../client/src/lib/date'
 import { dayStats } from '../../../client/src/lib/day'
-import { computeFinance } from '../../../client/src/lib/finance'
+import { computeFinance, getCycle } from '../../../client/src/lib/finance'
 import { deriveAutoTasks } from '../../../client/src/lib/smart'
 import { fmt, litres, num } from '../../../client/src/lib/util'
 import { answer, classify, CONFIDENT, INTENTS, train } from './brain'
-import { CRISIS_MEALS, DAY_FOCUS, DAY_KEYS } from '../../../client/src/lib/defaults'
+import { CRISIS_MEALS, DAY_FOCUS, DAY_KEYS, GROCERY_WEEKS } from '../../../client/src/lib/defaults'
 
 export interface BotResult {
   state: AppState
@@ -31,7 +31,9 @@ export const HELP = [
   '• week — The weekly budget & your Weekend Movie Fund!',
   '• month — The royal coffers (salary, rent, savings)',
   '• gym — Today\'s anatomical sculpting split (strut like a gazelle!)',
-  '• meals / breakfast / lunch / dinner — PG culinary inspirations',
+  '• meals — Daily sustenance checklist (breakfast to dinner)',
+  '• groceries / buy — Weekly provisions & restock reminder',
+  '• breakfast / lunch / dinner — PG culinary inspirations',
   '• 120 auto  (or: gave 300 to rahul for lunch) — Confess an expenditure',
   '• what did i spend today  ·  can i afford a movie for 400 — Ask your mother',
   '• how am i doing  ·  good night — The day reviewed, mercilessly',
@@ -429,6 +431,48 @@ function gymSplit(s: AppState, now: Date): string {
   return `🏛️ ${focus} — ${name}\n${pick(gymQuotes)}\nDid you walk your 60 minutes, or are you lounging like a frippet?`
 }
 
+function dailyMealChecklist(s: AppState, now: Date): string {
+  const name = userName(s)
+  const today = toISO(now)
+  const logged = s.meals.filter((m) => m.date === today)
+  const findSlot = (slot: string) => logged.find((m) => m.slot?.toLowerCase() === slot.toLowerCase())
+
+  const b = findSlot('breakfast')
+  const l = findSlot('lunch')
+  const sn = findSlot('snack') || findSlot('evening snack')
+  const d = findSlot('dinner')
+
+  const st = dayStats(s, today)
+  const target = s.targets.proteinG
+
+  return [
+    `📋 ${name}'s Daily Sustenance Checklist:`,
+    `${b ? '✅' : '[ ]'} Breakfast: ${b ? `${b.title} (${b.protein}g)` : '3 Boiled Eggs + Chai (18g · ₹25)'}`,
+    `${l ? '✅' : '[ ]'} Lunch: ${l ? `${l.title} (${l.protein}g)` : 'Rice + Dal + Curd + 1 Egg (22g · ₹55)'}`,
+    `${sn ? '✅' : '[ ]'} Snack: ${sn ? `${sn.title} (${sn.protein}g)` : 'Peanut Butter Toast / Sprouts (15g · ₹20)'}`,
+    `${d ? '✅' : '[ ]'} Dinner: ${d ? `${d.title} (${d.protein}g)` : 'Roti + Paneer / Eggs + Veggies (30g · ₹65)'}`,
+    ``,
+    `🥩 Protein Tally: ${st.proteinG} / ${target}g (${Math.max(0, target - st.proteinG)}g remaining)`,
+    `"Eat properly, ${name}. I will not have you looking like a Victorian orphan!"`,
+  ].join('\n')
+}
+
+function weeklyGroceryList(s: AppState, now: Date): string {
+  const name = userName(s)
+  const today = toISO(now)
+  const cycle = getCycle(today, s.finance.paydayDay)
+  const diffDays = Math.max(0, Math.floor((now.getTime() - new Date(cycle.start).getTime()) / (1000 * 60 * 60 * 24)))
+  const weekIdx = Math.floor(diffDays / 7) % GROCERY_WEEKS.length
+  const gw = GROCERY_WEEKS[weekIdx]
+
+  return [
+    `🛒 ${gw.title} Provisions — ${gw.focus} (for ${name}):`,
+    ...gw.items.map((it) => `• [ ] ${it.name} (${it.qty})`),
+    ``,
+    `Target: ~₹${gw.target}. Restock your staples, ${name}! Don't wait until the larder is desolate.`,
+  ].join('\n')
+}
+
 function mealSuggestions(s: AppState, now: Date, slot?: string): string {
   const name = userName(s)
   const chosenSlot = slot ? slot[0].toUpperCase() + slot.slice(1) : slotFor(now.getHours())
@@ -574,8 +618,14 @@ function handle(state: AppState, input: string, now: Date): BotResult {
   if (['week', 'weekly', '/week'].includes(cmd)) return noChange(weekSummary(state, now))
   if (['month', 'monthly', '/month'].includes(cmd)) return noChange(monthSummary(state, now))
   if (['gym', 'workout', 'exercise', 'split'].includes(cmd)) return noChange(gymSplit(state, now))
-  if (['meals', 'meal', 'food', 'breakfast', 'lunch', 'dinner', 'snack', 'cook'].includes(cmd) && !restTokens.length) {
-    return noChange(mealSuggestions(state, now, cmd !== 'meals' && cmd !== 'meal' && cmd !== 'food' ? cmd : undefined))
+  if (['meals', 'meal', 'food', 'eating', 'diet', 'menu'].includes(cmd) && !restTokens.length) {
+    return noChange(dailyMealChecklist(state, now))
+  }
+  if (['breakfast', 'lunch', 'dinner', 'snack', 'cook'].includes(cmd) && !restTokens.length) {
+    return noChange(mealSuggestions(state, now, cmd))
+  }
+  if (['groceries', 'grocery', 'buy', 'shopping', 'weekly buy', 'provisions'].includes(cmd) || lower.includes('what to buy') || lower.includes('weekly groceries')) {
+    return noChange(weeklyGroceryList(state, now))
   }
   if (cmd === 'savings' || cmd === 'vault') {
     const fv = computeFinance(state, today)
