@@ -196,5 +196,18 @@ export const WorkoutLog = model('WorkoutLog', WorkoutLogSchema)
 export const Journal = model('Journal', JournalSchema)
 export const Config = model('Config', ConfigSchema)
 
+// The chat bot's own memory (recent lines, greeting count). Separate from Config so the app's sync never touches it.
+const BotMemorySchema = new Schema(
+  {
+    key: { type: String, required: true, unique: true },
+    picks: { type: Schema.Types.Mixed, default: {} },
+    morning: { type: Schema.Types.Mixed, default: { count: 0, at: 0 } },
+    history: { type: Schema.Types.Mixed, default: [] }, // last few chat turns, for Gemini
+    ai: { type: Schema.Types.Mixed, default: null }, // { day, count } Gemini replies today
+  },
+  opts,
+)
+export const BotMemory = model('BotMemory', BotMemorySchema)
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type AnyModel = Model<any>

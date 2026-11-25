@@ -1,5 +1,5 @@
 import { hydrate } from '../../client/src/lib/hydrate'
-import { runCommand } from '../src/bot/commands'
+import { emptyMemory, runCommand } from '../src/bot/commands'
 
 process.env.TZ = 'Asia/Kolkata'
 let state = hydrate(null)
@@ -80,4 +80,52 @@ for (const m of [
     process.exit(1)
   }
   console.log('\nall regression checks passed')
+}
+
+// ---------- option 1: data-aware, natural-language Moira ----------
+{
+  const at = (h: number, m = 0) => new Date(2026, 10, 25, h, m)
+  let s = runCommand(hydrate(null), 'salary 25160', at(9)).state
+  let mem = emptyMemory()
+  let failed = 0
+  const check = (when: Date, msg: string, ok: (reply: string, changed: boolean) => boolean, why: string) => {
+    const r = runCommand(s, msg, when, mem)
+    s = r.state
+    mem = r.memory
+    const pass = ok(r.reply, r.changed)
+    if (!pass) failed++
+    console.log(`${pass ? 'ok  ' : 'FAIL'} ${msg.padEnd(34)} ${why}${pass ? '' : `\n     got: ${r.reply.replace(/\n/g, ' | ')}`}`)
+  }
+  const last = () => s.expenses[s.expenses.length - 1]
+
+  check(at(8), 'good morning', (r) => r.includes('💰 Today:'), 'first greeting gives the day plan')
+  check(at(9), 'gave 300 to rahul for lunch', (r, c) => c && last().amount === 300 && last().title === 'rahul lunch' && last().category === 'Outside Food', 'long sentence logged, clean title')
+  check(at(9), 'i spent 200 on chai and samosa', (r, c) => c && last().amount === 200 && last().category === 'Outside Food', 'sentence with "i spent"')
+  check(at(9), 'paid rs 80 for auto', (r, c) => c && last().amount === 80 && last().category === 'Rides', '"rs 80" understood')
+  check(at(10), 'what did i spend today', (r) => r.includes('₹580') && r.includes('rahul lunch'), 'lists today with total')
+  check(at(10), 'spent yesterday?', (r) => r.includes('yesterday'), 'yesterday')
+  check(at(10), 'can i afford a movie for 400', (r, c) => !c && /weekend fund/i.test(r), 'answers from weekend fund, logs nothing')
+  check(at(10), 'can i spend 50000', (r, c) => !c && r.startsWith('Absolutely not'), 'refuses big spend')
+  check(at(10), 'can i afford 500?', (r, c) => !c, 'question is never logged')
+  check(at(15), 'hi', (r) => r.includes('\n') && /today|water/.test(r), 'afternoon hi adds a line about your day')
+  check(at(23, 30), 'hey', (r) => /11:30|this late/.test(r), 'late-night greeting')
+  check(at(15), 'how am i doing', (r) => r.includes('📋') && r.includes('💧'), 'day report')
+  check(at(14), 'good morning', (r) => r.includes('2:00'), 'late "morning" gets teased with the time')
+  check(at(22), 'good night', (r) => r.includes('📋') && /out of three|flawless|catastrophe/.test(r), 'night wrap-up with verdict')
+  // memory: same group should not repeat within 3 picks
+  const seen: string[] = []
+  for (let i = 0; i < 4; i++) {
+    const r = runCommand(s, 'blah blah', at(9), mem)
+    mem = r.memory
+    seen.push(r.reply.split('\n')[0])
+  }
+  const noRepeat = new Set(seen).size === seen.length
+  if (!noRepeat) failed++
+  console.log(`${noRepeat ? 'ok  ' : 'FAIL'} ${'4× blah blah'.padEnd(34)} no repeated line across 4 replies (memory carried)`)
+
+  if (failed) {
+    console.error(`\n${failed} option-1 check(s) failed`)
+    process.exit(1)
+  }
+  console.log('\nall option-1 checks passed')
 }

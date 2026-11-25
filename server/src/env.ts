@@ -30,6 +30,16 @@ export const bots = {
       : undefined,
 }
 
+// Gemini-backed Moira for messages the rules don't understand. Off unless GEMINI_API_KEY is set.
+// GEMINI_MODEL picks the model; MOIRA_AI_DAILY_LIMIT caps replies per day.
+export const ai = wa.GEMINI_API_KEY?.trim()
+  ? {
+      apiKey: wa.GEMINI_API_KEY.trim(),
+      model: wa.GEMINI_MODEL?.trim() || 'gemini-3.8-flash',
+      dailyLimit: Math.max(0, Number(wa.MOIRA_AI_DAILY_LIMIT ?? 60)) || 60,
+    }
+  : undefined
+
 // There is no login screen: the API key is the only thing protecting salary, debt and spending data once the
 // server is reachable from the internet. So a production server will not start without a strong one.
 if (isProd) {

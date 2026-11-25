@@ -5,9 +5,12 @@ import cors from 'cors'
 import express, { type NextFunction, type Request, type Response } from 'express'
 import helmet from 'helmet'
 import mongoose from 'mongoose'
-import { bots, env } from './env.js'
+import { ai, bots, env } from './env.js'
 import { loadSnapshot, saveSnapshot, type Snapshot } from './state.js'
 import { botRouter, makeSenders } from './bot/webhooks.js'
+import type { BotMemory as BotMemoryState } from './bot/commands.js'
+import { BotMemory } from './models.js'
+import { makeMoiraAi } from './bot/moira-ai.js'
 import { api } from './routes.js'
 
 const app = express()
@@ -25,9 +28,24 @@ if (bots.whatsapp || bots.telegram) {
   app.use('/webhook', botRouter(bots, {
     load: loadSnapshot,
     save: (s) => saveSnapshot(s as unknown as Snapshot),
+    loadMemory: async () => {
+      const doc = await BotMemory.findOne({ key: 'moira' }).lean<Partial<BotMemoryState>>()
+      return doc
+        ? { picks: doc.picks ?? {}, morning: doc.morning ?? { count: 0, at: 0 }, history: doc.history ?? [], ai: doc.ai }
+        : null
+    },
+    saveMemory: async (m) => {
+      await BotMemory.updateOne(
+        { key: 'moira' },
+        { $set: { picks: m.picks, morning: m.morning, history: m.history ?? [], ai: m.ai ?? null } },
+        { upsert: true },
+      )
+    },
+    ...(ai ? { askMoira: makeMoiraAi(ai), aiDailyLimit: ai.dailyLimit } : {}),
     ...makeSenders(bots),
   }))
   console.log(`Bots enabled: ${[bots.whatsapp && 'WhatsApp', bots.telegram && 'Telegram'].filter(Boolean).join(', ')}`)
+  console.log(ai ? `Moira AI on (${ai.model}, up to ${ai.dailyLimit} replies/day)` : 'Moira AI off (set GEMINI_API_KEY to turn it on)')
 }
 
 app.use('/api', (_req, res) => {

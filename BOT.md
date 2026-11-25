@@ -19,6 +19,10 @@ A leading `@` is optional; `@spent 120 auto` and `spent 120 auto` do the same th
 | `salary 25160` | Enters this month's salary and allocates it. |
 | `debt 2000` | Logs a debt payment. |
 | `today` | What you can spend today and this week, pool, water, steps, to-dos. |
+| `gave 300 to rahul for lunch` · `i spent 200 on chai` · `paid rs 80 for auto` | Normal sentences work too, as long as they have a money word (spent, paid, gave, bought, ordered, ₹, rs). |
+| `what did i spend today` · `spent yesterday?` | Lists that day's expenses with the total. |
+| `can i afford a movie for 400` · `can i spend 2000` | Checks against what's left today, this week, and the weekend fund for outings. Logs nothing. |
+| `how am i doing` · `hi` · `good night` | Moira answers with your real numbers: what's over, water behind for the time of day, walk not done, low protein. Good night ends with the day's score. |
 | `undo` | Removes the last expense you logged (chat or by hand). Grocery checkouts and crisis entries are undone in the app. |
 
 ## Why not your own WhatsApp chat?
@@ -56,11 +60,21 @@ Menus on Meta's site change; if a name below differs, look for the closest one i
 - Meta retries deliveries, so each message id is applied only once.
 - Tokens live only in Render's environment. Never put them in the code or in chat.
 
+## Optional: Moira with Gemini (free chat)
+With this on, anything the commands above don't understand ("my landlord is driving me crazy", "can I afford a movie this weekend?", "treated rahul to lunch, 300 gone") goes to Google Gemini. It replies in Moira's voice using your real numbers (today's limit, week, weekend fund, last 7 days, water, steps, tasks), remembers the last 6 back-and-forths, and can log expenses, water, steps, tasks and rent/bills paid from normal sentences. Commands like `lunch 300` or `today` still use the free rules and never call Gemini.
+
+1. Get a key at **aistudio.google.com** → Get API key.
+2. In **Render → Environment** add `GEMINI_API_KEY`. Optional: `GEMINI_MODEL` (default `gemini-3.8-flash`) and `MOIRA_AI_DAILY_LIMIT` (default 60 replies a day).
+3. Redeploy. The log shows `Moira AI on (...)`. Remove the key to go back to rules only.
+
+If Gemini is down, slow, blocked, or the daily limit is reached, Moira answers with her normal rule-based line instead. If replies stop and the log shows a 404, Google has retired that model id: set `GEMINI_MODEL` to a current one from aistudio.google.com.
+
 ## Limits and costs
 - You start every chat, so replies are normal free-form messages. Reminders the bot would start by itself need Meta-approved templates, which is why those use Claude scheduled tasks for now.
 - Meta may charge per message; check [Meta's pricing page](https://developers.facebook.com/documentation/business-messaging/whatsapp/pricing.md) for India. Telegram is free.
 - Free Render sleeps after ~15 minutes idle, so the first message after a quiet spell can take up to a minute to get a reply. WhatsApp retries for you.
-- Fixed commands only for now. Free text like "gave 300 to rahul for lunch" would need a Claude API key (pay per use).
+- Without a `GEMINI_API_KEY`, Moira follows rules only, so she understands the forms above, not any sentence. Messages ending in `?` are never logged as expenses.
+- Her memory (recent lines, greeting count) is kept in MongoDB, so she doesn't repeat herself after free Render wakes up.
 - The WhatsApp API version defaults to `v25.0` (`WHATSAPP_API_VERSION` overrides it). Meta retires old versions, so update it if replies stop working.
 
 ## Testing without Meta or Telegram

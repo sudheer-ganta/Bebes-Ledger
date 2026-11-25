@@ -2,7 +2,9 @@ import crypto from 'node:crypto'
 import { Router, type Request, type Response } from 'express'
 import type { AppState } from '../../../client/src/types'
 import { hydrate } from '../../../client/src/lib/hydrate'
-import { runCommand } from './commands'
+import { toISO } from '../../../client/src/lib/date'
+import type { MoiraAi } from './moira-ai'
+import { emptyMemory, runCommand, type BotMemory } from './commands'
 
 export interface BotConfig {
   whatsapp?: { token: string; phoneId: string; verifyToken: string; appSecret: string; allowed: string[]; apiVersion: string }
@@ -16,7 +18,16 @@ export interface BotDeps {
   sendWhatsApp: (to: string, text: string) => Promise<void>
   sendTelegram: (chatId: string, text: string) => Promise<void>
   now?: () => Date
+  /** Moira's memory between messages; optional, and a failure here never blocks a reply */
+  loadMemory?: () => Promise<BotMemory | null>
+  saveMemory?: (m: BotMemory) => Promise<void>
+  /** Gemini-backed Moira for messages the rules don't understand; off when not set */
+  askMoira?: MoiraAi
+  /** most Gemini replies per day (protects the API bill); default 60 */
+  aiDailyLimit?: number
 }
+
+const HISTORY_TURNS = 12 // 6 back-and-forths
 
 export const digits = (s: string) => s.replace(/\D/g, '')
 
@@ -37,7 +48,29 @@ export function handleText(text: string, deps: BotDeps): Promise<string> {
       return 'The database is not reachable right now. Try again in a minute.'
     }
     if (!raw) return 'No data on the server yet. Open Life OS once, go to Settings → Data & sync and connect it, then try again.'
-    const result = runCommand(hydrate(raw as Partial<AppState>), text, deps.now?.() ?? new Date())
+    const now = deps.now?.() ?? new Date()
+    const memory = (await deps.loadMemory?.().catch(() => null)) ?? emptyMemory()
+    const state = hydrate(raw as Partial<AppState>)
+    let result: { state: AppState; reply: string; changed: boolean; fallback?: boolean; memory: BotMemory } =
+      runCommand(state, text, now, memory)
+    const mem = result.memory
+    const history = mem.history ?? []
+
+    // the rules didn't understand: let Gemini answer, within today's cap; on any error keep the rule reply
+    const day = toISO(now)
+    const used = mem.ai?.day === day ? mem.ai.count : 0
+    if (result.fallback && deps.askMoira && used < (deps.aiDailyLimit ?? 60)) {
+      try {
+        const ai = await deps.askMoira(state, text, now, history)
+        mem.ai = { day, count: used + 1 }
+        result = { ...ai, memory: mem }
+      } catch (e) {
+        console.error('bot: Gemini failed, using rule reply', e instanceof Error ? e.message : e)
+      }
+    }
+
+    mem.history = [...history, { role: 'user' as const, text: text.slice(0, 500) }, { role: 'assistant' as const, text: result.reply.slice(0, 500) }].slice(-HISTORY_TURNS)
+    await deps.saveMemory?.(mem).catch((e) => console.error('bot: memory save failed', e))
     if (result.changed) {
       try {
         await deps.save(result.state)

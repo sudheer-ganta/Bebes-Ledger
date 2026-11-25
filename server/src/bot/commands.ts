@@ -13,11 +13,13 @@ export interface BotResult {
   state: AppState
   reply: string
   changed: boolean
+  /** true when the rules didn't really understand the message (Gemini may answer instead) */
+  fallback?: boolean
 }
 
 const pick = (arr: string[]): string => arr[Math.floor(Math.random() * arr.length)]
 
-const userName = (s: AppState): string => (s.profile?.name && s.profile.name !== 'Me' ? s.profile.name : 'Sudheer')
+export const userName = (s: AppState): string => (s.profile?.name && s.profile.name !== 'Me' ? s.profile.name : 'Sudheer')
 
 export const HELP = [
   '🎭 Bébé\'s Ledger — Directed by Moira Rose 🎭',
@@ -29,7 +31,9 @@ export const HELP = [
   '• month — The royal coffers (salary, rent, savings)',
   '• gym — Today\'s anatomical sculpting split (strut like a gazelle!)',
   '• meals / breakfast / lunch / dinner — PG culinary inspirations',
-  '• 120 auto  (or: spent 120 auto) — Confess an expenditure',
+  '• 120 auto  (or: gave 300 to rahul for lunch) — Confess an expenditure',
+  '• what did i spend today  ·  can i afford a movie for 400 — Ask your mother',
+  '• how am i doing  ·  good night — The day reviewed, mercilessly',
   '• water 500  (or: glass) — Imbibe potable crystalline libations',
   '• walk  (or: steps 3000 / steps set 6000) — Grand perambulations',
   '• ate 3 eggs p20 — Record your protein intake',
@@ -60,7 +64,7 @@ function parseAmount(tok: string): number | null {
   return Number.isFinite(n) && n > 0 ? n : null
 }
 
-const guessCategory = (text: string): ExpenseCategory => {
+export const guessCategory = (text: string): ExpenseCategory => {
   const t = text.toLowerCase()
   for (const [cat, re] of CATEGORY_WORDS) if (re.test(t)) return cat
   return 'Personal'
@@ -89,20 +93,34 @@ function progressBar(current: number, target: number, length = 8): string {
   return '█'.repeat(filled) + '░'.repeat(length - filled)
 }
 
-const lastPickedMap = new Map<string, number>()
+/**
+ * What Moira remembers between messages. Kept in its own MongoDB document (not in the app's data), so it
+ * survives free Render going to sleep and the web app's sync never overwrites it.
+ */
+export interface BotMemory {
+  /** recent line numbers per reply group, so she doesn't repeat herself */
+  picks: Record<string, number[]>
+  morning: { count: number; at: number }
+  /** recent chat, oldest first, so Gemini can follow the conversation */
+  history?: Array<{ role: 'user' | 'assistant'; text: string }>
+  /** Gemini calls today, for the daily cap */
+  ai?: { day: string; count: number }
+}
+export const emptyMemory = (): BotMemory => ({ picks: {}, morning: { count: 0, at: 0 } })
+
+// runCommand is synchronous and messages are handled one at a time, so a module-level "current memory" is safe
+let mem: BotMemory = emptyMemory()
+
+/** Random line, avoiding the last few used in the same group. */
 function pickNoRepeat(key: string, arr: string[]): string {
   if (arr.length <= 1) return arr[0] ?? ''
-  const prev = lastPickedMap.get(key) ?? -1
-  let next = Math.floor(Math.random() * arr.length)
-  if (next === prev) {
-    next = (next + 1) % arr.length
-  }
-  lastPickedMap.set(key, next)
+  const recent = mem.picks[key] ?? []
+  const avoid = new Set(recent.slice(-Math.min(3, arr.length - 1)))
+  const options = arr.map((_, i) => i).filter((i) => !avoid.has(i))
+  const next = options[Math.floor(Math.random() * options.length)]
+  mem.picks[key] = [...recent, next].slice(-5)
   return arr[next]
 }
-
-let lastMorningCount = 0
-let lastMorningAt = 0
 
 /** Whole-word / whole-phrase match, so "folder" doesn't trigger "fold" or "machine" trigger "shine". */
 const hasWord = (text: string, ...words: string[]): boolean =>
@@ -118,6 +136,116 @@ const openTasks = (s: AppState, fv: ReturnType<typeof computeFinance>, now: Date
 
 const spendToday = (s: AppState, date: string): number =>
   s.expenses.filter((e) => e.date === date).reduce((acc, e) => acc + e.amount, 0)
+
+/** Today's allowance and what's left, before or after salary. */
+export function moneyToday(s: AppState, today: string) {
+  const fv = computeFinance(s, today)
+  const spent = spendToday(s, today)
+  if (fv.pending) {
+    const limit = Math.round(fv.plan.pocket / fv.cycle.totalDays)
+    return { fv, spent, limit, left: limit - spent, week: null as number | null }
+  }
+  return { fv, spent, limit: Math.round(fv.dailyLimit), left: fv.todayLeft, week: fv.weekLeft }
+}
+
+const partOfDay = (h: number) => (h < 5 ? 'late' : h < 12 ? 'morning' : h < 17 ? 'afternoon' : h < 22 ? 'evening' : 'late')
+const clock = (now: Date) => now.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true })
+
+/**
+ * One short line about how your day is actually going (money first, then water, walk, protein),
+ * so chatty replies talk about you instead of being random. Empty when there's nothing worth saying.
+ */
+function nudge(s: AppState, now: Date): string {
+  const name = userName(s)
+  const today = toISO(now)
+  const h = now.getHours()
+  const m = moneyToday(s, today)
+  const st = dayStats(s, today)
+  const walked = !!s.dayLogs[today]?.habits?.walk
+
+  if (m.left < 0) {
+    return pickNoRepeat('n_over', [
+      `And you're ${fmt(-m.left)} over today's ${fmt(m.limit)} already. Agita, ${name}. Pure agita.`,
+      `We are ${fmt(-m.left)} past today's limit, darling. The purse is closed.`,
+      `${fmt(-m.left)} over budget today. I've seen more restraint at a Rose family open bar.`,
+    ])
+  }
+  // water: expect a steady climb from 7am to 9pm
+  const expected = st.waterTarget * Math.min(1, Math.max(0, (h - 7) / 14))
+  if (h >= 11 && st.waterMl < expected - 500) {
+    return pickNoRepeat('n_water', [
+      `Only ${litres(st.waterMl)} of water by ${clock(now)}? You'll shrivel like a forgotten raisin, ${name}.`,
+      `${litres(st.waterMl)} of ${litres(st.waterTarget)} water. Drink, ${name}, before you become jerky.`,
+      `Your water is at ${litres(st.waterMl)}. A desiccated apricot has more moisture.`,
+    ])
+  }
+  if (h >= 17 && !walked && st.steps < st.stepTarget) {
+    return pickNoRepeat('n_walk', [
+      `And the 60-minute walk, ${name}? Still waiting. ${num(st.steps)} steps is not a performance.`,
+      `${num(st.steps)} of ${num(st.stepTarget)} steps. The evening promenade awaits, darling.`,
+    ])
+  }
+  if (h >= 20 && st.proteinG < s.targets.proteinG * 0.6) {
+    return pickNoRepeat('n_protein', [
+      `Protein at ${st.proteinG} of ${s.targets.proteinG} g. Eggs, ${name}. Eggs are not optional.`,
+      `${st.proteinG} g protein today. Muscles are not built on optimism, darling.`,
+    ])
+  }
+  if (h >= 12 && m.left > 0) {
+    return pickNoRepeat('n_good', [
+      `${fmt(m.left)} of today's ${fmt(m.limit)} still intact. I'm almost proud, ${name}.`,
+      `You've spent ${fmt(m.spent)} today and kept ${fmt(m.left)}. Restraint suits you.`,
+      `${fmt(m.left)} left today. Guard it like my wig collection.`,
+    ])
+  }
+  return ''
+}
+
+/**
+ * Plain-text facts about the user's day, handed to Gemini so it answers from real numbers only.
+ * Everything Moira-with-Gemini is allowed to say about money comes from here.
+ */
+export function factsFor(s: AppState, now: Date): string {
+  const today = toISO(now)
+  const m = moneyToday(s, today)
+  const fv = m.fv
+  const st = dayStats(s, today)
+  const walked = !!s.dayLogs[today]?.habits?.walk
+  const todays = s.expenses.filter((e) => e.date === today)
+  const week = Array.from({ length: 7 }, (_, i) => addDays(today, i - 6)).map((d) => {
+    const total = spendToday(s, d)
+    return `${fmtDate(d, { weekday: 'short', day: 'numeric' })} ${fmt(total)}`
+  })
+  const open = openTasks(s, fv, now).slice(0, 8)
+  return [
+    `Name: ${userName(s)}`,
+    `Now: ${fmtDate(today, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}, ${clock(now)} (India time)`,
+    fv.pending
+      ? `Salary: NOT yet received this month; payday in ${fv.cycle.daysToPayday} day(s). Spending follows a planned ${fmt(m.limit)}/day until then.`
+      : `Salary: received. Pocket pool left ${fmt(fv.remaining)} for ${fv.cycle.daysLeft} more day(s) until payday.`,
+    `Today: limit ${fmt(m.limit)}, spent ${fmt(m.spent)}, ${m.left >= 0 ? `left ${fmt(m.left)}` : `OVER by ${fmt(-m.left)}`}`,
+    fv.pending ? '' : `This week left: ${fmt(fv.weekLeft)} · Weekend/outings fund left: ${fmt(fv.lifestyle.left)} · Groceries left: ${fmt(fv.groceries.left)} · Emergency buffer: ${fmt(fv.buffer.left)}`,
+    `Today's expenses: ${todays.length ? todays.map((e) => `${fmt(e.amount)} ${e.title} (${e.category})`).join('; ') : 'none'}`,
+    `Spending, last 7 days: ${week.join(', ')}`,
+    `Water ${litres(st.waterMl)} of ${litres(st.waterTarget)} · Steps ${num(st.steps)} of ${num(st.stepTarget)} · 60-min walk ${walked ? 'done' : 'not done'} · Protein ${st.proteinG} of ${s.targets.proteinG} g`,
+    `Debt left: ${fmt(fv.debt.remaining)} · Rent ${fv.pending ? 'n/a' : s.paid[`${fv.cycle.key}:rent`] ? 'paid' : 'not paid'} this cycle`,
+    `Open tasks: ${open.length ? open.map((t, i) => `${i + 1}. ${t.title}`).join('; ') : 'none'}`,
+  ].filter(Boolean).join('\n')
+}
+
+/** "₹120 auto · ₹20 chai" list of one day's expenses. */
+function dayExpenses(s: AppState, date: string, label: string, name: string): string {
+  const list = s.expenses.filter((e) => e.date === date)
+  if (!list.length) return `Not a single rupee spent ${label}, ${name}. Either a miracle or you forgot to tell me.`
+  const total = list.reduce((a, e) => a + e.amount, 0)
+  const lines = list.slice(-8).map((e) => `• ${fmt(e.amount)} ${e.title}`)
+  return [`🧾 ${label[0].toUpperCase() + label.slice(1)}: ${fmt(total)} across ${list.length}`, ...lines, list.length > 8 ? `…and ${list.length - 8} more.` : ''].filter(Boolean).join('\n')
+}
+
+/** Words that carry no meaning in an expense title: "gave 300 to rahul for lunch" → "rahul lunch". */
+const FILLER = new Set(['i', 'just', 'to', 'for', 'on', 'at', 'the', 'a', 'an', 'my', 'of', 'rs', 'rs.', 'rupees', 'inr', '₹', 'today', 'spent', 'spend', 'paid', 'pay', 'gave', 'give', 'bought', 'buy', 'ordered', 'order', 'cost', 'costs', 'was', 'it'])
+const MONEY_VERB = /\b(gave|give|spent|spend|paid|pay|bought|buy|ordered|cost|costs)\b|₹|\brs\.?\s*\d|\brupees\b/i
+const QUESTION = /\?\s*$|^(can|could|should|shall|will|would|how|what|why|is|am|do|did)\b/i
 
 function moiraScoldOverspend(name: string, over: number): string {
   const quotes = [
@@ -296,7 +424,17 @@ function limitLine(s: AppState, now: Date): string {
     : `✨ Left today: ${fmt(fv.todayLeft)} · Weekend Fund: ${fmt(Math.max(0, fv.lifestyle.left))}`
 }
 
-export function runCommand(state: AppState, input: string, now: Date = new Date()): BotResult {
+/**
+ * Handle one chat message. Pass `memory` (loaded from the database) to keep Moira's memory across server
+ * restarts; the updated copy comes back on the result. Without it, memory lasts only while the server runs.
+ */
+export function runCommand(state: AppState, input: string, now: Date = new Date(), memory?: BotMemory): BotResult & { memory: BotMemory } {
+  if (memory) mem = structuredClone({ ...emptyMemory(), ...memory })
+  const r = handle(state, input, now)
+  return { ...r, memory: mem }
+}
+
+function handle(state: AppState, input: string, now: Date): BotResult {
   const text = input.trim().replace(/^[@/!]+\s*/, '').replace(/\s+/g, ' ')
   const lower = text.toLowerCase()
   const today = toISO(now)
@@ -318,14 +456,14 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
     /^(?:(?:good|top of the)\s+)?(?:morning|mrng|morrow|gm|bon matin)(?:\s+(?:mom|ma|moira|darling|bebe|bébé))?[\s!.🌅☀️]*$/iu.test(lower)
   if (isMorning) {
     // greetings hours apart are a new morning, not spam
-    if (now.getTime() - lastMorningAt > 6 * 3600_000) lastMorningCount = 0
-    lastMorningAt = now.getTime()
-    lastMorningCount++
-    if (lastMorningCount >= 3) {
+    if (now.getTime() - mem.morning.at > 6 * 3600_000) mem.morning.count = 0
+    mem.morning.at = now.getTime()
+    mem.morning.count++
+    if (mem.morning.count >= 3) {
       return noChange(
         pickNoRepeat('morning_spam', [
           `${name} you fusssssssyyyyy little fuckerrrrrrrrrrr go away!`,
-          `What do you want now?! You've said morning ${lastMorningCount} times!`,
+          `What do you want now?! You've said morning ${mem.morning.count} times!`,
           `Are you stuck on a loop, ${name}?! Stop shouting greetings and tell me what you spent!`,
         ])
       )
@@ -339,9 +477,21 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
       `Top of the morning. Tell me you brewed something potable, I refuse to face you unmedicated. ☕`,
       `Bébé, good mrng. Stop acting like a disgruntled pelican and tell me what you bought.`,
     ]
-    return noChange(pickNoRepeat('morning', morningQuotes))
+    const h = now.getHours()
+    if (h >= 12) {
+      return noChange(pickNoRepeat('morning_late', [
+        `Morning? It's ${clock(now)}, ${name}. Half the day has already been squandered.`,
+        `"Good morning" at ${clock(now)}? Even I have been awake since the croissants, darling.`,
+      ]))
+    }
+    // the first greeting of the day also tells you the plan
+    const m = moneyToday(state, today)
+    const plan = mem.morning.count === 1
+      ? `\n💰 Today: ${fmt(Math.max(0, m.left))} to spend${m.week !== null ? ` · ${fmt(Math.max(0, m.week))} left this week` : ''}. 💧 Start with a glass of water.`
+      : ''
+    return noChange(pickNoRepeat('morning', morningQuotes) + plan)
   }
-  lastMorningCount = 0
+  mem.morning.count = 0
 
   if (['today', 'day', 'status', 'balance', 'bal', 'left', 'summary', '/today'].includes(cmd)) return noChange(summary(state, now))
   if (['week', 'weekly', '/week'].includes(cmd)) return noChange(weekSummary(state, now))
@@ -499,14 +649,52 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
     return done(next, `⚔️ ${fmt(n)} paid down! Still remaining in the shadows: ${fmt(computeFinance(next, today).debt.remaining)}`)
   }
 
-  // ---- expense: "spent 120 auto" | "120 auto" | "chai 20"
-  const isExpenseWord = ['spent', 'spend', 'paid', 'pay', 'exp', 'expense', 'bought', 'buy'].includes(cmd)
+  // ---- money questions: "what did I spend today", "can I afford a movie for 400", "how am I doing"
+  const isQuestion = QUESTION.test(lower)
+  const spentQ = /\b(what|how much)\b.*\b(did i|have i|i)\s+(spend|spent)\b|\b(my )?(spending|expenses)\b|^spent (today|yesterday)\??$/i
+  if (spentQ.test(lower) && !/\b(week|month)\b/.test(lower)) {
+    const yday = /\byesterday\b/.test(lower)
+    return noChange(dayExpenses(state, yday ? addDays(today, -1) : today, yday ? 'yesterday' : 'today', name))
+  }
+  if (/\bafford\b/.test(lower) || (isQuestion && /^(can|could|should|shall) i (spend|buy|get|order|go|have)\b/.test(lower))) {
+    const m = moneyToday(state, today)
+    const amtTok = text.split(' ').find((t) => parseAmount(t) !== null)
+    const want = amtTok ? parseAmount(amtTok)! : null
+    const isOuting = /\b(movie|movies|cinema|date|party|pub|drinks|concert|outing|weekend)\b/.test(lower)
+    const fun = m.fv.pending ? null : Math.max(0, m.fv.lifestyle.left)
+    if (want === null) {
+      return noChange(`You have ${fmt(Math.max(0, m.left))} left today${m.week !== null ? ` and ${fmt(Math.max(0, m.week))} this week` : ''}${isOuting && fun !== null ? `; the weekend fund holds ${fmt(fun)}` : ''}. Tell me the price, ${name}, and I'll rule on it.`)
+    }
+    if (isOuting && fun !== null) {
+      return noChange(want <= fun
+        ? `Yes. ${fmt(want)} from the weekend fund leaves ${fmt(fun - want)}. Go, ${name}, but wear something worthy of being seen in. 🎬`
+        : `No, darling. The weekend fund has ${fmt(fun)}, you want ${fmt(want)}. Find a cheaper show or a richer friend.`)
+    }
+    if (want <= m.left) {
+      return noChange(`Yes, ${name}. ${fmt(want)} leaves ${fmt(m.left - want)} of today's ${fmt(m.limit)}. Spend it as though someone is watching. I am.`)
+    }
+    if (m.week !== null && want <= m.week) {
+      return noChange(`Today only has ${fmt(Math.max(0, m.left))}. It fits this week's ${fmt(m.week)}, but the coming days get tighter by ${fmt(want - Math.max(0, m.left))}. Is it worth it, ${name}?`)
+    }
+    return noChange(`Absolutely not. ${fmt(want)} against ${fmt(Math.max(0, m.left))} left today${m.week !== null ? ` and ${fmt(Math.max(0, m.week))} this week` : ''}. Put it back, ${name}.`)
+  }
+  if (/\b(how am i doing|how'?s my day|how is my day|how did i do|am i (doing )?(ok|okay|good|fine))\b/.test(lower)) {
+    const m = moneyToday(state, today)
+    const st = dayStats(state, today)
+    const verdict = m.left < 0 ? `Over budget by ${fmt(-m.left)}.` : `${fmt(m.spent)} spent, ${fmt(m.left)} left.`
+    return noChange(`📋 ${verdict} 💧 ${litres(st.waterMl)}/${litres(st.waterTarget)} · 🚶 ${num(st.steps)}/${num(st.stepTarget)} · 🥩 ${st.proteinG}/${state.targets.proteinG} g\n${nudge(state, now) || `A respectable showing, ${name}. Don't let it go to your head.`}`)
+  }
+
+  // ---- expense: "spent 120 auto" | "120 auto" | "chai 20" | "gave 300 to rahul for lunch"
+  const isExpenseWord = ['spent', 'spend', 'paid', 'pay', 'exp', 'expense', 'bought', 'buy', 'gave', 'ordered'].includes(cmd)
   const firstAmount = parseAmount(cmdRaw)
   const tokens = isExpenseWord ? restTokens : text.split(' ')
   // "500 gm paneer 120": 500 is a quantity (followed by a unit), 120 is the price
   const amountIdx = tokens.findIndex((t, i) => parseAmount(t) !== null && !UNITS.has((tokens[i + 1] ?? '').toLowerCase()))
+  // short messages with a number are expenses; longer ones need a money word ("spent", "gave", "₹")
   const looksLikeExpense =
-    (isExpenseWord || firstAmount !== null || (amountIdx >= 0 && tokens.length <= 5)) && !NOT_MONEY.test(lower)
+    (isExpenseWord || firstAmount !== null || (amountIdx >= 0 && (tokens.length <= 5 || MONEY_VERB.test(lower)))) &&
+    !NOT_MONEY.test(lower) && !isQuestion
   // rent and bills are already set aside from salary: mark them paid instead of spending pocket money twice
   if ((isExpenseWord || looksLikeExpense) && /\b(rent|bills?)\b/i.test(lower)) {
     const fv = computeFinance(state, today)
@@ -524,38 +712,61 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
     const amount = parseAmount(tokens[amountIdx])!
     const words = tokens.filter((_, i) => i !== amountIdx)
     const tag = words.find((w) => w.startsWith('#'))?.slice(1).toLowerCase()
-    const title = words.filter((w) => !w.startsWith('#')).join(' ').trim()
-    const category = (tag && TAGS[tag]) || guessCategory(`${title} ${cmd}`)
+    const title = words.filter((w) => !w.startsWith('#') && !FILLER.has(w.toLowerCase())).join(' ').trim()
+    const category = (tag && TAGS[tag]) || guessCategory(lower)
     const next = A.addExpense({ amount, title: title || category, category, date: today })(state)
     const reaction = moiraExpenseReaction(name, amount)
     return done(next, `✨ Logged ${fmt(amount)} for ${category}${title ? ` (${title})` : ''}. ${reaction}\n${limitLine(next, now)}`)
   }
-  if (isExpenseWord) return noChange(`How much lucre was surrendered, ${name}? Tell me the damage, darling!`)
+  if (isExpenseWord) return { ...noChange(`How much lucre was surrendered, ${name}? Tell me the damage, darling!`), fallback: true }
 
   // ---- conversation: only reached when the message was not a command or an expense
+  // a long sentence that only tripped a keyword ("I went to a party and...") wasn't really understood
+  const longText = text.split(' ').length > 6
+  const chat = (reply: string): BotResult => ({ ...noChange(reply), fallback: longText })
   if (hasWord(lower, 'did you sleep') || hasWord(lower, 'did u slept') || hasWord(lower, 'slept last night') || hasWord(lower, 'sleep last night')) {
-    return noChange(`Sleep? In this establishment, ${name}?! I was kept awake by the tragic acoustics and Johnny's fitful tossing. What do you want?`)
+    return chat(`Sleep? In this establishment, ${name}?! I was kept awake by the tragic acoustics and Johnny's fitful tossing. What do you want?`)
   }
   if (hasWord(lower, 'rude')) {
-    return noChange(`Rude? I am not rude, ${name}, I am an artist starved of glamour. Now what did you want?`)
+    return chat(`Rude? I am not rude, ${name}, I am an artist starved of glamour. Now what did you want?`)
   }
   if (hasWord(lower, "didn't blow") || hasWord(lower, "didnt blow") || hasWord(lower, "haven't spent") || hasWord(lower, "havent spent")) {
-    return noChange(`You didn't blow our money? Well, miracles never cease. Tell me what's left or confess your damage, ${name}.`)
+    return chat(`You didn't blow our money? Well, miracles never cease. Tell me what's left or confess your damage, ${name}.`)
   }
   if (['what', 'why', 'huh', 'what?', 'why?'].includes(cmd) && text.length <= 10) {
-    return noChange(`What do you mean "what", ${name}? Use your words, darling! Did we spend money or not?`)
+    return chat(`What do you mean "what", ${name}? Use your words, darling! Did we spend money or not?`)
   }
   if (['fine', 'ok', 'okay', 'k', 'sure', 'alright'].includes(cmd) && text.length <= 10) {
-    return noChange(`Good. Now hydrate and let me languish in peace, or tell me what you bought.`)
+    return chat(`Good. Now hydrate and let me languish in peace, or tell me what you bought.`)
   }
   if (hasWord(lower, 'are you an ai') || hasWord(lower, 'are you ai') || hasWord(lower, 'are you a bot') || hasWord(lower, 'are you bot') || hasWord(lower, 'who are you')) {
-    return noChange(`An AI? A bot?! How dare you, ${name}! I am Moira Rose, award-winning actress of stage and screen, reduced to overseeing your dismal purse strings. Now log your pennies!`)
+    return chat(`An AI? A bot?! How dare you, ${name}! I am Moira Rose, award-winning actress of stage and screen, reduced to overseeing your dismal purse strings. Now log your pennies!`)
   }
-  if (['hi', 'hello', 'hey', 'heyy', 'hola'].includes(cmd)) {
-    return noChange(`What do you want, ${name}? "I’m trying very hard not to connect with people right now." Confess your damage or let me languish in peace.`)
+  if (['hi', 'hii', 'hello', 'hey', 'heyy', 'hola', 'yo'].includes(cmd) && restTokens.length <= 2) {
+    const greet: Record<string, string[]> = {
+      morning: [
+        `Oh, it's you. Morning, ${name}. I haven't even finished my face.`,
+        `${name}! Before noon? Either you need money or advice. Possibly both.`,
+      ],
+      afternoon: [
+        `What do you want, ${name}? "I'm trying very hard not to connect with people right now."`,
+        `Afternoon, ${name}. I was mid-rehearsal. This had better be about money.`,
+      ],
+      evening: [
+        `Evening, ${name}. Report: what has the day cost us?`,
+        `Ah, the prodigal returns at dusk. Speak, ${name}.`,
+      ],
+      late: [
+        `It's ${clock(now)}, ${name}. Decent people are asleep. Indecent people are spending. Which are you?`,
+        `Why are you awake, ${name}? Nothing good is purchased this late.`,
+      ],
+    }
+    const part = partOfDay(now.getHours())
+    const n = nudge(state, now)
+    return chat(pickNoRepeat(`hi_${part}`, greet[part]) + (n ? `\n${n}` : ''))
   }
   if (['bye', 'goodbye', 'cya', 'adios'].includes(cmd)) {
-    return noChange(`Goodbye, ${name}. Try not to squander our coins on frivolous balatrons.`)
+    return chat(`Goodbye, ${name}. Try not to squander our coins on frivolous balatrons.`)
   }
   if (['gn', 'goodnight', 'night', 'sleep', 'bonne nuit'].includes(cmd) || lower.startsWith('good night') || lower.startsWith('bonne nuit')) {
     const nightQuotes = [
@@ -563,14 +774,23 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
       `Bonne nuit, ${name}. Put away that rectangle and don't wander off with local strays. 🛌`,
       `Good night, ${name}. Extinguish the lights and wake me only if our fortune returns. 😴`,
     ]
-    return noChange(pickNoRepeat('night', nightQuotes))
+    // close the day with its numbers and a verdict
+    const m = moneyToday(state, today)
+    const st = dayStats(state, today)
+    const wins = [m.left >= 0, st.waterMl >= st.waterTarget, st.steps >= st.stepTarget || !!state.dayLogs[today]?.habits?.walk].filter(Boolean).length
+    const verdict = wins === 3
+      ? `A flawless day. I shall tell no one, lest it go to your head.`
+      : wins === 2 ? `Two out of three. Respectable, not legendary.`
+      : wins === 1 ? `One out of three, ${name}. Tomorrow we do better.`
+      : `A catastrophe in three acts. Sleep it off.`
+    return chat(`${pickNoRepeat('night', nightQuotes)}\n📋 ${m.left < 0 ? `${fmt(-m.left)} over` : `${fmt(m.spent)} spent, ${fmt(m.left)} kept`} · 💧 ${litres(st.waterMl)}/${litres(st.waterTarget)} · 🚶 ${num(st.steps)}/${num(st.stepTarget)}\n${verdict}`)
   }
   if (['thanks', 'thank you', 'ty', 'thx'].includes(cmd)) {
-    return noChange(`You're welcome, ${name}. Don't expect applause for the bare minimum.`)
+    return chat(`You're welcome, ${name}. Don't expect applause for the bare minimum.`)
   }
   if (hasWord(lower, 'water') && /\b(how much|status|left)\b/.test(lower)) {
     const st = dayStats(state, today)
-    return noChange(`💧 Water: ${litres(st.waterMl)} / ${litres(st.waterTarget)}. Drink up, ${name}.`)
+    return chat(`💧 Water: ${litres(st.waterMl)} / ${litres(st.waterTarget)}. Drink up, ${name}.`)
   }
   if (hasWord(lower, 'budget') || hasWord(lower, 'how much') || hasWord(lower, 'can i spend') || hasWord(lower, 'allowance')) {
     const fv = computeFinance(state, today)
@@ -578,78 +798,78 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
     if (fv.pending) {
       const plannedPerDay = Math.round(fv.plan.pocket / fv.cycle.totalDays)
       const leftToday = plannedPerDay - spentToday
-      return noChange(
+      return chat(
         leftToday < 0
           ? `😱 Over planned limit by ${fmt(-leftToday)}, ${name}! Stop spending!`
           : `💰 Plan is ${fmt(plannedPerDay)} a day. You have ${fmt(leftToday)} left today (awaiting salary in ${fv.cycle.daysToPayday}d). Try not to blow it on nonsense.`
       )
     }
     const leftToday = fv.todayLeft
-    return noChange(
+    return chat(
       leftToday < 0
         ? `😱 Over budget by ${fmt(-leftToday)}, ${name}! Stop spending!`
         : `💰 Today's limit: ${fmt(fv.dailyLimit)}. Left today: ${fmt(leftToday)}. Try not to blow it on nonsense.`
     )
   }
   if (hasWord(lower, 'how are you') || ['sup', 'wassup', 'whats up'].includes(cmd)) {
-    return noChange(`I’m bedeviled with meetings and suffering from your financial choices, ${name}. What do you need?`)
+    return chat(`I’m bedeviled with meetings and suffering from your financial choices, ${name}. What do you need?`)
   }
   if (hasWord(lower, 'pish') || hasWord(lower, 'posh')) {
-    return noChange(`"Pish posh, ${name}! You can't put a price on style, my dear! When one of us shines, all of us shine!" 💅`)
+    return chat(`"Pish posh, ${name}! You can't put a price on style, my dear! When one of us shines, all of us shine!" 💅`)
   }
   if (hasWord(lower, 'mediocrity') || hasWord(lower, 'allergic')) {
-    return noChange(`"I am allergic to mediocrity, ${name}! Darling, I am incapable of doing anything with subtlety!" 👑`)
+    return chat(`"I am allergic to mediocrity, ${name}! Darling, I am incapable of doing anything with subtlety!" 👑`)
   }
   if (hasWord(lower, 'rsvp') || hasWord(lower, 'party')) {
-    return noChange(`"I would be pleased to RSVP as pending, ${name}. I would never throw a party without a theme—that's just barbaric!" 🍸`)
+    return chat(`"I would be pleased to RSVP as pending, ${name}. I would never throw a party without a theme—that's just barbaric!" 🍸`)
   }
   if (hasWord(lower, 'style') || hasWord(lower, 'fashion') || hasWord(lower, 'sweater') || hasWord(lower, 'dress')) {
-    return noChange(`"You can't put a price on style, my dear ${name}! I do not merely walk through life, I perform it!" 👠✨`)
+    return chat(`"You can't put a price on style, my dear ${name}! I do not merely walk through life, I perform it!" 👠✨`)
   }
   if (hasWord(lower, 'subtlety') || hasWord(lower, 'subtle')) {
-    return noChange(`"Darling, I am incapable of doing anything with subtlety! One must champagne oneself and say: I am ready for this!" 🍾`)
+    return chat(`"Darling, I am incapable of doing anything with subtlety! One must champagne oneself and say: I am ready for this!" 🍾`)
   }
   if (hasWord(lower, 'champagne')) {
-    return noChange(`"One must champagne oneself, ${name}, and say: I am ready for this!" 🥂`)
+    return chat(`"One must champagne oneself, ${name}, and say: I am ready for this!" 🥂`)
   }
   if (hasWord(lower, 'shine')) {
-    return noChange(`"When one of us shines, all of us shine, ${name}!" ✨`)
+    return chat(`"When one of us shines, all of us shine, ${name}!" ✨`)
   }
   if (hasWord(lower, 'perform')) {
-    return noChange(`"I do not merely walk through life, ${name}. I perform it!" 🎭`)
+    return chat(`"I do not merely walk through life, ${name}. I perform it!" 🎭`)
   }
   if (hasWord(lower, 'crow') || hasWord(lower, 'crows')) {
-    return noChange(`"The crows don't just have eyes, ${name}. They have... wings." 🦅 A cinematic triumph! Now drink some water, darling.`)
+    return chat(`"The crows don't just have eyes, ${name}. They have... wings." 🦅 A cinematic triumph! Now drink some water, darling.`)
   }
   if (hasWord(lower, 'wine') || hasWord(lower, 'fruit wine') || hasWord(lower, 'herb')) {
-    return noChange(`"The herb-a-flinge... fruit wine! This wine is awful. Give me another glass!" 🍷 Cheers, ${name}!`)
+    return chat(`"The herb-a-flinge... fruit wine! This wine is awful. Give me another glass!" 🍷 Cheers, ${name}!`)
   }
   if (hasWord(lower, 'pelican')) {
-    return noChange(`"${name}, stop acting like a disgruntled pelican!" — I believe that is my line, darling! 🎭`)
+    return chat(`"${name}, stop acting like a disgruntled pelican!" — I believe that is my line, darling! 🎭`)
   }
   if (hasWord(lower, 'gossip')) {
-    return noChange(`"Gossip is the devil's telephone, ${name}. Best to just hang up." ...Though do tell me what happened! ☎️`)
+    return chat(`"Gossip is the devil's telephone, ${name}. Best to just hang up." ...Though do tell me what happened! ☎️`)
   }
   if (hasWord(lower, 'turtle')) {
-    return noChange(`"Turtles do not pets make, ${name}. The poor things are riddled with a myriad of diseases. You may as well tie a leash around a raw chicken cutlet." 🐢`)
+    return chat(`"Turtles do not pets make, ${name}. The poor things are riddled with a myriad of diseases. You may as well tie a leash around a raw chicken cutlet." 🐢`)
   }
   if (hasWord(lower, 'shoes') || hasWord(lower, 'skate')) {
-    return noChange(`"I don’t skate through life, ${name}. I walk through life in really nice shoes." 👠`)
+    return chat(`"I don’t skate through life, ${name}. I walk through life in really nice shoes." 👠`)
   }
   if (hasWord(lower, 'cheese') || hasWord(lower, 'fold')) {
-    return noChange(`"What does 'fold in the cheese' mean, ${name}?! YOU FOLD IT IN! I cannot show you everything! Well, can you show me one thing?!" 🧀`)
+    return chat(`"What does 'fold in the cheese' mean, ${name}?! YOU FOLD IT IN! I cannot show you everything! Well, can you show me one thing?!" 🧀`)
   }
   if (hasWord(lower, 'condom')) {
-    return noChange(`"I'm sorry I'm not a condom, ${name}!" 🎭`)
+    return chat(`"I'm sorry I'm not a condom, ${name}!" 🎭`)
   }
   if (hasWord(lower, 'apathy')) {
-    return noChange(`"I am suddenly overwhelmed by a wave of apathy, ${name}." 💅`)
+    return chat(`"I am suddenly overwhelmed by a wave of apathy, ${name}." 💅`)
   }
   if (hasWord(lower, 'towel')) {
-    return noChange(`"I have asked you thrice now for a towel so that I may wash this town off my body, ${name}!" 🧖‍♀️`)
+    return chat(`"I have asked you thrice now for a towel so that I may wash this town off my body, ${name}!" 🧖‍♀️`)
   }
   if (hasWord(lower, 'thumb')) {
-    return noChange(`"I’m not going to sit here and take this from someone who looks like a thumb, ${name}!" 🎭`)
+    return chat(`"I’m not going to sit here and take this from someone who looks like a thumb, ${name}!" 🎭`)
   }
 
   const chatFallbacks = [
@@ -664,5 +884,7 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
     `Darling, I am incapable of doing anything with subtlety. Tell me what you need before I have an apoplexy.`,
     `Look at you, ${name}. A walking cry for help. Drink some water and fold in the cheese.`,
   ]
-  return noChange(pickNoRepeat('fallbacks', chatFallbacks))
+  // when she doesn't understand, she at least talks about your day
+  const n = nudge(state, now)
+  return { ...noChange(pickNoRepeat('fallbacks', chatFallbacks) + (n ? `\n${n}` : '')), fallback: true }
 }
