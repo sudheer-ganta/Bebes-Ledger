@@ -14,10 +14,10 @@ function Tile({
     <button
       type="button"
       onClick={() => navigate('wallet')}
-      className={cn('min-w-0 rounded-lg p-3 text-left transition-colors hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-slate-300', big && 'col-span-2 lg:col-span-1')}
+      className={cn('min-w-0 rounded-xl p-3.5 text-left transition-colors hover:bg-slate-50', big && 'col-span-2 lg:col-span-1')}
     >
-      <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">{label}</div>
-      <div className={cn('tnum mt-1 font-semibold tracking-tight', big ? 'text-4xl' : 'text-2xl', colour)}>{value}</div>
+      <div className="label-couture">{label}</div>
+      <div className={cn('tnum mt-1.5 font-display font-semibold', big ? 'text-[34px] leading-none' : 'text-[24px] leading-none', colour)}>{value}</div>
       {sub && <div className="mt-1 text-xs leading-snug text-slate-500">{sub}</div>}
       {children}
     </button>
@@ -27,9 +27,9 @@ function Tile({
 const SEGMENTS = [
   { key: 'rent', label: 'Rent', cls: 'bg-slate-700' },
   { key: 'fixed', label: 'Bills', cls: 'bg-slate-500' },
-  { key: 'debt', label: 'Debt', cls: 'bg-amber-500' },
+  { key: 'debt', label: 'Debt', cls: 'bg-rose-400' },
   { key: 'savings', label: 'Savings', cls: 'bg-emerald-500' },
-  { key: 'pocket', label: 'Pocket pool', cls: 'bg-sky-500' },
+  { key: 'pocket', label: 'Pocket pool', cls: 'bg-gold' },
 ] as const
 
 /** The first thing you see every day: what you can spend per day / per week, the pool, and the fixed money. */
@@ -44,8 +44,6 @@ export function MoneyStrip() {
   const poolTone: Tone | undefined = p ? undefined : poolRatio(fv) < 0.2 ? 'danger' : poolRatio(fv) < 0.4 ? 'warn' : undefined
   const saved = fv.savings.floorNow + fv.savings.swept - fv.savings.withdrawals - fv.topups
 
-  // what the plan would give per day / per week once the salary lands
-  const planDay = fv.plan.pocket / fv.cycle.totalDays
 
   return (
     <Card bodyClass="p-2 sm:p-3">
@@ -57,7 +55,7 @@ export function MoneyStrip() {
           value={p ? '₹0' : over ? `−${fmt(-fv.todayLeft)}` : fmt(fv.todayLeft)}
           sub={
             p
-              ? `Plan: ${fmt(planDay)} a day`
+              ? (fv.waitingFirst ? `We are between engagements until ${fmtDate(fv.cycle.nextPayday)}` : 'Enter your salary to begin')
               : over ? `over today's ${fmt(fv.dailyLimit)} limit` : `of ${fmt(fv.dailyLimit)} a day · spent ${fmt(fv.todaySpend)}`
           }
         />
@@ -65,7 +63,7 @@ export function MoneyStrip() {
           label="Left this week"
           tone={weekTone}
           value={p ? '₹0' : fv.weekLeft < 0 ? `−${fmt(-fv.weekLeft)}` : fmt(fv.weekLeft)}
-          sub={p ? `Plan: ${fmt(planDay * 7)} a week` : `≈ ${fmt(fv.weekPace)} a week pace · ${fv.daysLeftInWeek} day${fv.daysLeftInWeek === 1 ? '' : 's'} to go`}
+          sub={p ? 'Nothing to budget until payday' : `≈ ${fmt(fv.weekPace)} a week pace · ${fv.daysLeftInWeek} day${fv.daysLeftInWeek === 1 ? '' : 's'} to go`}
         />
         <Tile
           label="Pocket pool left"
@@ -90,7 +88,7 @@ export function MoneyStrip() {
       </div>
 
       {!p && a.salary > 0 && (
-        <div className="mt-2 border-t border-[#F1F5F9] px-3 pb-1 pt-3">
+        <div className="mt-2 border-t border-line-soft px-3 pb-1 pt-3">
           <div className="mb-1.5 text-[11px] text-slate-500">Where your {fmt(a.salary)} salary went</div>
           <div className="flex h-2.5 overflow-hidden rounded-full bg-slate-100" role="img" aria-label="Salary allocation">
             {SEGMENTS.map((s) => {

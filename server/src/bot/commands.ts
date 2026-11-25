@@ -53,7 +53,7 @@ const CATEGORY_WORDS: Array<[ExpenseCategory, RegExp]> = [
   ['Rides', /\b(auto|ola|uber|rapido|metro|bus|cab|bike|petrol|ride|taxi|train)\b/],
   ['Movies/Dates', /\b(movie|movies|cinema|pvr|date|gift|party|show|concert|drinks|pub)\b/],
   ['Outside Food', /\b(chai|tea|coffee|snack|snacks|lunch|dinner|breakfast|biryani|food|swiggy|zomato|restaurant|ordered|juice|dosa|idli|meal|mess)\b/],
-  ['Groceries', /\b(veg|vegetable|vegetables|grocery|groceries|eggs?|milk|fruit|fruits|rice|atta|dal|paneer|chicken|curd|kirana|bigbasket|blinkit|zepto)\b/],
+  ['Groceries', /\b(veg|veggies|vegetables?|grocery|groceries|eggs?|tray|milk|fruits?|apples?|bananas?|oranges?|guavas?|papaya|grapes|mangoe?s?|pomegranates?|watermelon|kiwis?|pears?|rice|atta|dal|paneer|chicken|fish|curd|bread|oats|peanuts?|almonds?|cashews?|nuts|seeds|raisins|soya|kirana|bigbasket|blinkit|zepto|instamart|dmart)\b/],
 ]
 const TAGS: Record<string, ExpenseCategory> = {
   groceries: 'Groceries', grocery: 'Groceries', food: 'Outside Food', outside: 'Outside Food',
@@ -153,7 +153,8 @@ export function moneyToday(s: AppState, today: string) {
     const limit = Math.round(fv.plan.pocket / fv.cycle.totalDays)
     return { fv, spent, limit, left: limit - spent, week: null as number | null }
   }
-  return { fv, spent, limit: Math.round(fv.dailyLimit), left: fv.todayLeft, week: fv.weekLeft }
+  // after salary, "spent today" means what counts against today's limit (groceries come out of their own money)
+  return { fv, spent: fv.todaySpend, limit: Math.round(fv.dailyLimit), left: fv.todayLeft, week: fv.weekLeft }
 }
 
 /**
@@ -442,6 +443,14 @@ function mealSuggestions(s: AppState, now: Date, slot?: string): string {
     `Eat properly, ${name}. You may as well tie a leash around a raw chicken cutlet.`,
   ]
   return lines.join('\n')
+}
+
+/** Groceries come out of the month's groceries money, not today's limit: say so after a grocery buy. */
+function groceryLine(s: AppState, today: string, wasGrocery: boolean): string {
+  if (!wasGrocery) return ''
+  const fv = computeFinance(s, today)
+  if (fv.pending) return ''
+  return `🛒 Groceries left this month: ${fmt(Math.max(0, fv.groceries.left))} of ${fmt(fv.groceries.budget)} (doesn't count against today).`
 }
 
 function limitLine(s: AppState, now: Date): string {
@@ -803,6 +812,31 @@ function handle(state: AppState, input: string, now: Date): BotResult {
       )
     }
   }
+  // several things in one message: "eggs tray 210, apples 120 and banana 60" → one expense each
+  if (!isQuestion && !NOT_MONEY.test(lower)) {
+    const parts = (isExpenseWord ? rest : text).split(/\s*(?:,|;|\+|&|\band\b)\s*/i).map((p) => p.trim()).filter(Boolean)
+    if (parts.length >= 2) {
+      const items = parts.map((p) => {
+        const toks = p.split(' ').filter((w) => !FILLER.has(w.toLowerCase()))
+        const priced = toks.map((t, i) => (parseAmount(t) !== null && !UNITS.has((toks[i + 1] ?? '').toLowerCase()) ? i : -1)).filter((i) => i >= 0)
+        if (priced.length !== 1) return null
+        const title = toks.filter((_, i) => i !== priced[0]).join(' ').trim()
+        return title ? { amount: parseAmount(toks[priced[0]])!, title } : null
+      })
+      if (items.every(Boolean)) {
+        let next = state
+        const lines: string[] = []
+        for (const it of items as Array<{ amount: number; title: string }>) {
+          const category = guessCategory(it.title)
+          next = A.addExpense({ amount: it.amount, title: it.title, category, date: today })(next)
+          lines.push(`• ${fmt(it.amount)} ${it.title} (${category})`)
+        }
+        const total = (items as Array<{ amount: number }>).reduce((a, it) => a + it.amount, 0)
+        const g = groceryLine(next, today, (items as Array<{ title: string }>).some((it) => guessCategory(it.title) === 'Groceries'))
+        return done(next, `✨ Logged ${items.length} things, ${fmt(total)} in all:\n${lines.join('\n')}\n${moiraExpenseReaction(name, total)}${g ? `\n${g}` : ''}\n${limitLine(next, now)}`)
+      }
+    }
+  }
   if (looksLikeExpense && amountIdx >= 0) {
     const amount = parseAmount(tokens[amountIdx])!
     const words = tokens.filter((_, i) => i !== amountIdx)
@@ -811,7 +845,8 @@ function handle(state: AppState, input: string, now: Date): BotResult {
     const category = (tag && TAGS[tag]) || guessCategory(lower)
     const next = A.addExpense({ amount, title: title || category, category, date: today })(state)
     const reaction = moiraExpenseReaction(name, amount)
-    return done(next, `✨ Logged ${fmt(amount)} for ${category}${title ? ` (${title})` : ''}. ${reaction}\n${limitLine(next, now)}`)
+    const g = groceryLine(next, today, category === 'Groceries')
+    return done(next, `✨ Logged ${fmt(amount)} for ${category}${title ? ` (${title})` : ''}. ${reaction}${g ? `\n${g}` : ''}\n${limitLine(next, now)}`)
   }
   if (isExpenseWord) return { ...noChange(`How much lucre was surrendered, ${name}? Tell me the damage, darling!`), fallback: true }
 

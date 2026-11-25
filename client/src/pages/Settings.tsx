@@ -63,7 +63,7 @@ export function SettingsPage() {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Settings & Data" sub="Every baseline number is editable. Changes apply instantly." />
+      <PageHeader title="Settings & data" sub="Every baseline number is editable. Changes apply instantly." />
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card title="Money">
@@ -126,7 +126,7 @@ export function SettingsPage() {
           <Card title="Quick-expense buttons">
             <div className="mb-3 flex flex-wrap gap-1.5">
               {state.settings.quickPresets.map((p) => (
-                <span key={p.id} className="inline-flex items-center gap-1 rounded-full border border-[#E5E7EB] bg-white py-1 pl-3 pr-1 text-xs">
+                <span key={p.id} className="inline-flex items-center gap-1 rounded-full border border-line bg-white py-1 pl-3 pr-1 text-xs">
                   {p.title} ₹{p.amount}
                   <button aria-label={`Remove ${p.title}`} className="rounded-full p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600"
                     onClick={() => update((s) => ({ ...s, settings: { ...s.settings, quickPresets: s.settings.quickPresets.filter((x) => x.id !== p.id) } }))}><Trash2 size={11} /></button>
@@ -162,7 +162,7 @@ export function SettingsPage() {
             ["Tracking history", "Water, steps, habits, meals, gym logs, journal, crisis log", () => update(clearHistory)],
             ["Salary entries", "Back to waiting for salary", () => update((s) => ({ ...s, salaries: {}, paid: {}, updatedAt: new Date().toISOString() }))],
           ] as Array<[string, string, () => void]>).map(([title, desc, fn]) => (
-            <div key={title} className="flex items-start justify-between gap-2 rounded-lg border border-[#E5E7EB] p-3">
+            <div key={title} className="flex items-start justify-between gap-2 rounded-lg border border-line p-3">
               <div className="min-w-0"><div className="text-sm font-medium">{title}</div><div className="text-[11px] text-slate-500">{desc}</div></div>
               <ConfirmButton label="Clear" onConfirm={() => { fn(); toast(`${title} cleared`, "info") }} />
             </div>

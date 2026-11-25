@@ -242,11 +242,12 @@ export function computeFinance(state: AppState, today: ISODate): FinanceView {
   const poolTotal = eff.pocket + topups
   const remaining = poolTotal - poolSpent - swept
 
-  // "Today's spend" ignores the lumpy weekly grocery run and emergency/crisis outflows,
-  // which are planned/handled separately and would otherwise trip the daily alert.
+  // "Today's spend" ignores groceries (a tray of eggs lasts ten days: it comes out of the month's groceries
+  // money, and the lower pool is spread over the days left) and emergency/crisis outflows, which are
+  // planned/handled separately and would otherwise trip the daily alert.
   const todaySpend = sum(
     poolExp
-      .filter((e) => e.date === today && e.source !== 'grocery-checkout' && e.category !== 'Emergency')
+      .filter((e) => e.date === today && e.source !== 'grocery-checkout' && e.category !== 'Emergency' && e.category !== 'Groceries')
       .map((e) => e.amount),
   )
   const daysLeft = Math.max(1, cycle.daysLeft)

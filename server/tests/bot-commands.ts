@@ -148,3 +148,31 @@ for (const m of [
   }
   console.log('\nall pre-salary checks passed')
 }
+
+// ---------- bulk groceries: several items in one message, and groceries don't count against today ----------
+{
+  const at = new Date(2026, 11, 8, 18, 0) // after payday
+  let s = runCommand(hydrate(null), 'salary 25160', at).state
+  let failed = 0
+  const ok = (cond: boolean, why: string, got?: unknown) => {
+    if (!cond) failed++
+    console.log(`${cond ? 'ok  ' : 'FAIL'} ${why}${cond ? '' : `\n     got: ${JSON.stringify(got)}`}`)
+  }
+  const before = s.expenses.length
+  let r = runCommand(s, 'eggs tray 210, apples 120 and banana 60', at)
+  s = r.state
+  ok(s.expenses.length === before + 3 && s.expenses.slice(-3).every((e) => e.category === 'Groceries'), 'three grocery expenses from one message', s.expenses.slice(-3))
+  ok(r.reply.includes("doesn't count against today"), 'reply says groceries are separate from today')
+  r = runCommand(s, 'today', at)
+  ok(!r.reply.includes('Over by'), 'a ₹390 grocery run does not put today over the limit', r.reply.split('\n')[1])
+  r = runCommand(s, 'lunch 300 and auto 80', at)
+  s = r.state
+  ok(s.expenses.slice(-2).map((e) => e.category).join() === 'Outside Food,Rides', 'mixed items get their own categories')
+  r = runCommand(s, 'spent 120 on chai and samosa', at)
+  ok(r.state.expenses.length === s.expenses.length + 1 && r.state.expenses.at(-1)!.amount === 120, '"chai and samosa" with one price stays one expense')
+  if (failed) {
+    console.error(`\n${failed} bulk grocery check(s) failed`)
+    process.exit(1)
+  }
+  console.log('\nall bulk grocery checks passed')
+}

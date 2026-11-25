@@ -18,8 +18,8 @@ export function AllocationTable({ a, muted, debtLabel }: { a: Allocation; muted?
     { label: 'Savings (fixed)', v: a.savings },
   ]
   return (
-    <div className={cn('rounded-lg border border-[#E5E7EB]', muted && 'bg-slate-50/60')}>
-      <ul className="divide-y divide-[#F1F5F9] text-sm">
+    <div className={cn('rounded-lg border border-line', muted && 'bg-slate-50/60')}>
+      <ul className="divide-y divide-line-soft text-sm">
         <li className="flex justify-between px-3 py-2 font-semibold"><span>Salary</span><span className="tnum">{fmt(a.salary)}</span></li>
         {rows.map((r, i) => (
           <li key={r.label} className="flex items-start justify-between gap-3 px-3 py-2">

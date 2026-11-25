@@ -1,10 +1,85 @@
 @import "tailwindcss";
 
+/*
+ * "Moira" theme: black and white like her wardrobe, one plain font, colour only for good / bad numbers.
+ * The stock Tailwind scales (slate, emerald, rose, amber, sky) are redefined here, so every page picks
+ * the palette up without touching its classes.
+ */
 @theme {
-  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --color-canvas: #fafafa;
-  --color-line: #e5e7eb;
-  --color-ink: #0f172a;
+  /* Moira's wardrobe: black and white, nothing fussy. One plain modern font. */
+  --font-sans: "Outfit", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  --font-display: "Outfit", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+
+  --color-canvas: #f6f6f4;   /* off-white page */
+  --color-paper: #ffffff;    /* cards */
+  --color-line: #e6e6e3;
+  --color-line-soft: #f0f0ee;
+  --color-ink: #111111;
+  --color-gold: #111111;     /* the accent is simply black */
+  --color-gold-soft: #ededea;
+
+  --color-white: #ffffff;
+
+  /* neutral greys */
+  --color-slate-50: #f7f7f6;
+  --color-slate-100: #efefed;
+  --color-slate-200: #e4e4e1;
+  --color-slate-300: #cfcfcb;
+  --color-slate-400: #a3a3a0;
+  --color-slate-500: #737371;
+  --color-slate-600: #525250;
+  --color-slate-700: #3d3d3b;
+  --color-slate-800: #262625;
+  --color-slate-900: #111111;
+  --color-slate-950: #0a0a0a;
+
+/* "good": deep bottle green */
+  --color-emerald-50: #eef4ef;
+  --color-emerald-100: #d9e8dc;
+  --color-emerald-200: #b9d3bf;
+  --color-emerald-300: #8fb79a;
+  --color-emerald-400: #64987a;
+  --color-emerald-500: #3f7c5d;
+  --color-emerald-600: #2e6b4e;
+  --color-emerald-700: #245740;
+  --color-emerald-800: #1d4533;
+  --color-emerald-900: #163527;
+
+  /* "danger": oxblood, not fire-engine red */
+  --color-rose-50: #f8eeee;
+  --color-rose-100: #f0dada;
+  --color-rose-200: #e2b9bb;
+  --color-rose-300: #cf8f94;
+  --color-rose-400: #b8646c;
+  --color-rose-500: #9f4450;
+  --color-rose-600: #8c2f3a;
+  --color-rose-700: #742630;
+  --color-rose-800: #5c1f27;
+  --color-rose-900: #46181e;
+
+  /* "warning": antique gold */
+  --color-amber-50: #faf4e8;
+  --color-amber-100: #f2e5cb;
+  --color-amber-200: #e6d0a6;
+  --color-amber-300: #d6b67c;
+  --color-amber-400: #c29c5c;
+  --color-amber-500: #a8834a;
+  --color-amber-600: #8e6c3a;
+  --color-amber-700: #73562e;
+  --color-amber-800: #5a4325;
+  --color-amber-900: #43321c;
+
+  /* "info" and water: dusty ink-blue */
+  --color-sky-50: #eef2f5;
+  --color-sky-100: #dbe3ea;
+  --color-sky-200: #bccad6;
+  --color-sky-300: #94aabd;
+  --color-sky-400: #6d88a0;
+  --color-sky-500: #4f6d87;
+  --color-sky-600: #3e5a72;
+  --color-sky-700: #33495d;
+  --color-sky-800: #293a4a;
+  --color-sky-900: #1f2c38;
 }
 
 :root {
@@ -17,19 +92,49 @@ body,
   height: 100%;
 }
 
+html {
+  scroll-behavior: smooth;
+}
+
 body {
   margin: 0;
-  background: #fafafa;
-  color: #0f172a;
+  background-color: var(--color-canvas);
+  /* faint paper grain so the page isn't sterile */
+  color: var(--color-ink);
   font-family: var(--font-sans);
+  font-weight: 400;
+  letter-spacing: -0.005em;
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
-  font-feature-settings: "cv11", "ss01";
+}
+
+h1,
+h2,
+h3,
+.font-display {
+  font-family: var(--font-display);
+  letter-spacing: -0.02em;
+  text-wrap: balance;
 }
 
 /* keep number columns from jittering */
 .tnum {
-  font-variant-numeric: tabular-nums;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+/* small "couture" label: spaced small caps instead of shouty uppercase */
+.label-couture {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-slate-500);
+}
+
+/* a plain hairline under section titles */
+.rule-gold {
+  height: 1px;
+  background: var(--color-line);
 }
 
 input,
@@ -37,6 +142,18 @@ select,
 textarea,
 button {
   font: inherit;
+}
+
+button {
+  transition: transform 0.15s ease, background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-gold);
+  outline-offset: 2px;
 }
 
 input[type="number"]::-webkit-outer-spin-button,
@@ -58,7 +175,7 @@ input[type="number"] {
   to { transform: translateY(0); opacity: 1; }
 }
 .sheet-anim {
-  animation: sheet-up 0.18s ease-out;
+  animation: sheet-up 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 @keyframes toast-in {
@@ -66,11 +183,29 @@ input[type="number"] {
   to { transform: translateY(0); opacity: 1; }
 }
 .toast-anim {
-  animation: toast-in 0.18s ease-out;
+  animation: toast-in 0.2s ease-out;
+}
+
+/* sections fade up in a short cascade when a page opens */
+@keyframes rise {
+  from { transform: translateY(10px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+.rise > * {
+  animation: rise 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.rise > *:nth-child(2) { animation-delay: 0.05s; }
+.rise > *:nth-child(3) { animation-delay: 0.1s; }
+.rise > *:nth-child(4) { animation-delay: 0.15s; }
+.rise > *:nth-child(5) { animation-delay: 0.2s; }
+.rise > *:nth-child(n + 6) { animation-delay: 0.25s; }
+@media (prefers-reduced-motion: reduce) {
+  .rise > * { animation: none; }
+  html { scroll-behavior: auto; }
 }
 
 /* thin scrollbars */
 * {
   scrollbar-width: thin;
-  scrollbar-color: #cbd5e1 transparent;
+  scrollbar-color: var(--color-slate-300) transparent;
 }

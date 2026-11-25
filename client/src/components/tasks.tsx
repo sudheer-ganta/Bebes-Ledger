@@ -106,7 +106,7 @@ export function QuickAddTask({ defaultCategory = 'today' as TaskCategory }: { de
             {(['high', 'routine', 'low'] as Priority[]).map((p) => (
               <Chip key={p} active={priority === p} tone={PRIORITY_TONE[p]} onClick={() => setPriority(p)}>{PRIORITY_LABEL[p]}</Chip>
             ))}
-            <input type="date" value={due} onChange={(e) => setDue(e.target.value)} className="h-8 rounded-lg border border-[#E5E7EB] bg-white px-2 text-xs" aria-label="Due date" />
+            <input type="date" value={due} onChange={(e) => setDue(e.target.value)} className="h-8 rounded-lg border border-line bg-white px-2 text-xs" aria-label="Due date" />
             <button type="button" onClick={() => setDue('')} className="text-[11px] text-slate-400 hover:text-slate-700">no date</button>
           </div>
         </div>

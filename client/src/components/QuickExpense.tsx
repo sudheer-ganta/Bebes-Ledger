@@ -60,7 +60,7 @@ export function QuickExpense() {
         }}
         className="space-y-4"
       >
-        <div className="flex items-center gap-2 rounded-xl border border-[#E5E7EB] px-3 py-2 focus-within:ring-2 focus-within:ring-slate-200">
+        <div className="flex items-center gap-2 rounded-xl border border-line px-3 py-2 focus-within:ring-2 focus-within:ring-slate-200">
           <span className="text-2xl font-semibold text-slate-400">₹</span>
           <input
             autoFocus

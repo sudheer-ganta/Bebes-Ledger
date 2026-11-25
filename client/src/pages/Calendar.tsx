@@ -49,7 +49,7 @@ export function CalendarPage() {
   return (
     <div className="space-y-4">
       <PageHeader
-        title="Consistency Calendar"
+        title="Calendar"
         sub="Every day is scored on five pillars: Move · Water · Steps · Spend · Fuel. A Minimum Viable Day still counts."
       />
 
@@ -90,7 +90,7 @@ export function CalendarPage() {
                   className={cn(
                     'relative flex h-12 w-full min-w-0 flex-col sm:h-auto sm:aspect-[5/4] justify-between rounded-lg p-1 text-left transition-shadow sm:p-1.5',
                     !inMonth && 'opacity-35',
-                    future ? 'cursor-default bg-white ring-1 ring-[#F1F5F9]' : mt?.hasData ? SCORE_CLASS[mt.score] : 'bg-slate-50 hover:bg-slate-100',
+                    future ? 'cursor-default bg-white ring-1 ring-line-soft' : mt?.hasData ? SCORE_CLASS[mt.score] : 'bg-slate-50 hover:bg-slate-100',
                     d === today && 'ring-2 ring-slate-900',
                     selected === d && d !== today && 'ring-2 ring-sky-500',
                   )}
@@ -172,7 +172,7 @@ function DayPanel({ date }: { date: ISODate }) {
               key={h.id}
               onClick={() => update(toggleHabit(date, h.id))}
               aria-pressed={!!log.habits[h.id]}
-              className={cn('rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors', log.habits[h.id] ? 'border-emerald-300 bg-emerald-50 text-emerald-800' : 'border-[#E5E7EB] text-slate-500 hover:bg-slate-50')}
+              className={cn('rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors', log.habits[h.id] ? 'border-emerald-300 bg-emerald-50 text-emerald-800' : 'border-line text-slate-500 hover:bg-slate-50')}
             >
               {log.habits[h.id] && '✓ '}{h.label.replace(/^60-min round-trip walk to gym$/, 'Gym walk')}
             </button>
@@ -189,7 +189,7 @@ function DayPanel({ date }: { date: ISODate }) {
       </div>
 
       {(expenses.length > 0 || j) && (
-        <div className="mt-4 space-y-2 border-t border-[#F1F5F9] pt-3 text-xs">
+        <div className="mt-4 space-y-2 border-t border-line-soft pt-3 text-xs">
           {expenses.length > 0 && (
             <div>
               <div className="mb-1 font-medium text-slate-600">Spending</div>
@@ -208,7 +208,7 @@ function DayPanel({ date }: { date: ISODate }) {
         </div>
       )}
       {mt.hasData ? (
-        <div className="mt-4 border-t border-[#F1F5F9] pt-3">
+        <div className="mt-4 border-t border-line-soft pt-3">
           <ConfirmButton label="Clear this day" confirmLabel="Yes, clear this day" onConfirm={() => { update(clearDay(date)); toast("Day cleared", "info") }} />
         </div>
       ) : (

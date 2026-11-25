@@ -20,14 +20,23 @@ function ResetToday() {
 
 export function Body() {
   return (
-    <div className="space-y-4">
-      <PageHeader title="Gym, Steps & Hydration" sub="6-day body-part split · 9,500 steps · 2.75 L water" right={<ResetToday />} />
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        <Card title="Hydration" subtitle="Calibrated for 51 kg · active lifter"><WaterTracker /></Card>
-        <Card title="Daily steps" subtitle="Gym walk pre-credits ~5,500 steps"><StepTracker /></Card>
-        <Card title="Daily habits"><HabitList /></Card>
+    <div className="rise">
+      <PageHeader
+        title="Body & water"
+        sub="6-day split · 9,500 steps · 2.75 L water"
+        right={<ResetToday />}
+      />
+      {/* the workout is the main column; water, steps and habits sit beside it (above it on a phone) */}
+      <div className="grid items-start gap-5 lg:grid-cols-12">
+        <div className="order-2 lg:order-1 lg:col-span-8">
+          <Gym />
+        </div>
+        <aside className="order-1 grid gap-5 sm:grid-cols-2 lg:order-2 lg:col-span-4 lg:grid-cols-1">
+          <Card title="Water" subtitle="Calibrated for 51 kg · active lifter"><WaterTracker /></Card>
+          <Card title="Steps" subtitle="The gym walk counts ~5,500"><StepTracker /></Card>
+          <Card title="Daily habits" className="sm:col-span-2 lg:col-span-1"><HabitList /></Card>
+        </aside>
       </div>
-      <Gym />
     </div>
   )
 }
@@ -61,7 +70,8 @@ function Gym() {
 
   return (
     <Card
-      title={minimum ? 'Minimum Viable Day — mobility reset' : `Workout — ${DAY_LABEL[todayKey]}: ${DAY_FOCUS[todayKey]}`}
+      title={minimum ? 'Minimum day · mobility reset' : `${DAY_LABEL[todayKey]} · ${DAY_FOCUS[todayKey]}`}
+      subtitle={minimum ? 'Three gentle moves and the day still counts.' : 'Log each set; last week’s best is shown as a hint.'}
       icon={<Dumbbell size={14} />}
       action={<Badge tone={gym.pct >= 1 ? 'ok' : 'neutral'}>{Math.round(gym.pct * 100)}% complete</Badge>}
     >
@@ -76,11 +86,11 @@ function Gym() {
                 onClick={() => setViewKey(k)}
                 className={cn(
                   'shrink-0 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors',
-                  viewKey === k ? 'border-slate-900 bg-slate-900 text-white' : 'border-[#E5E7EB] bg-white text-slate-600 hover:bg-slate-50',
+                  viewKey === k ? 'border-slate-900 bg-slate-900 text-white' : 'border-line bg-paper text-slate-600 hover:border-gold/60',
                 )}
               >
                 {DAY_LABEL[k].slice(0, 3)}
-                {k === dayKeyOf(today) && <span className={cn('ml-1', viewKey === k ? 'text-emerald-300' : 'text-emerald-500')}>●</span>}
+                {k === dayKeyOf(today) && <span className={cn('ml-1', viewKey === k ? 'text-gold' : 'text-gold')}>●</span>}
               </button>
             ))}
           </div>
@@ -162,7 +172,7 @@ function Exercises({ dayKey, canLog }: { dayKey: DayKey; canLog: boolean }) {
           onSet={(i, p) => update(updateSet(today, e, i, p))} />
       ))}
       {exercises.length === 0 && <p className="text-sm text-slate-500">No exercises yet for this day.</p>}
-      <form className="flex flex-wrap items-end gap-2 border-t border-[#F1F5F9] pt-3"
+      <form className="flex flex-wrap items-end gap-2 border-t border-line-soft pt-3"
         onSubmit={(ev) => { ev.preventDefault(); if (!name.trim()) return; update(addExercise(dayKey, name, Math.max(1, Number(sets) || 3), reps || '10')); setName('') }}>
         <label className="min-w-40 flex-1"><span className="mb-1 block text-xs text-slate-500">Add exercise</span>
           <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Arnold press" /></label>
@@ -186,10 +196,10 @@ function ExerciseBlock({
   const done = rows.filter((r) => r.done).length
   const prefillHint = hint ? hint.match(/^([\d.]+) kg × (\d+)/) : null
   return (
-    <div className="rounded-lg border border-[#E5E7EB] p-3">
+    <div className="rounded-xl border border-line-soft bg-slate-50/60 p-4">
       <div className="mb-2 flex items-start justify-between gap-2">
         <div>
-          <div className="text-sm font-semibold">{e.name}</div>
+          <div className="font-display text-[16px] font-semibold">{e.name}</div>
           <div className="text-[11px] text-slate-500">
             {e.sets} × {e.reps}{hint && <> · last best <b className="text-slate-700">{hint}</b></>}
           </div>

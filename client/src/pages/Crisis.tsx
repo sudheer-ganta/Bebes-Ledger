@@ -42,7 +42,7 @@ export function Crisis({ initial }: { initial?: string }) {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="SOS · Crisis Mode" sub="Something's off. Pick what's going wrong — you'll get a concrete plan, not a lecture." />
+      <PageHeader title="SOS · crisis mode" sub="Something's off. Pick what's going wrong — you'll get a concrete plan, not a lecture." />
 
       {signals.length > 0 && (
         <div className="space-y-2">
@@ -63,7 +63,7 @@ export function Crisis({ initial }: { initial?: string }) {
             aria-pressed={mode === m.id}
             className={cn(
               'flex items-start gap-2.5 rounded-xl border p-3 text-left transition-colors',
-              mode === m.id ? 'border-rose-300 bg-rose-50 text-rose-900 ring-1 ring-rose-200' : 'border-[#E5E7EB] bg-white hover:bg-slate-50',
+              mode === m.id ? 'border-rose-300 bg-rose-50 text-rose-900 ring-1 ring-rose-200' : 'border-line bg-white hover:bg-slate-50',
             )}
           >
             <span className={mode === m.id ? 'text-rose-600' : 'text-slate-400'}>{m.icon}</span>
@@ -130,7 +130,7 @@ function MoneyPanel() {
             : <>You can cover survival food until payday with <b>{fmt(have - need)}</b> to spare. Cap yourself at <b>{fmt(cap)}/day</b>.</>}
         </div>
 
-        <div className="mt-4 flex items-center justify-between gap-3 rounded-lg border border-[#E5E7EB] p-3">
+        <div className="mt-4 flex items-center justify-between gap-3 rounded-lg border border-line p-3">
           <div>
             <div className="text-sm font-semibold">Survival budget</div>
             <div className="text-xs text-slate-500">Freezes lifestyle spending ({fmt(lifestyleFrozen)} left) and warns before you log movies, dates or rides.</div>
@@ -143,7 +143,7 @@ function MoneyPanel() {
 
       <div className="space-y-4">
         <Card title="Survival day plan" icon={<Utensils size={14} />} subtitle={`${fmt(SURVIVAL_DAILY)} · ~${SURVIVAL_DAY.reduce((a, m) => a + m.protein, 0)} g protein`}>
-          <ul className="divide-y divide-[#F1F5F9]">
+          <ul className="divide-y divide-line-soft">
             {SURVIVAL_DAY.map((m, i) => (
               <li key={m.id} className="flex items-center justify-between gap-2 py-2 text-sm">
                 <div className="min-w-0">
@@ -243,7 +243,7 @@ function ExpensePanel() {
             <div className="text-xs font-medium text-slate-600">How do you want to fund it?</div>
             {options.map((o) => (
               <button type="button" key={o.id} onClick={() => setMode(o.id)} aria-pressed={mode === o.id}
-                className={cn('block w-full rounded-lg border px-3 py-2 text-left', mode === o.id ? 'border-slate-900 bg-slate-50' : 'border-[#E5E7EB] hover:bg-slate-50')}>
+                className={cn('block w-full rounded-lg border px-3 py-2 text-left', mode === o.id ? 'border-slate-900 bg-slate-50' : 'border-line hover:bg-slate-50')}>
                 <div className="text-sm font-medium">{o.title}</div>
                 <div className="text-xs text-slate-500">{o.desc}</div>
               </button>
@@ -262,7 +262,7 @@ function ExpensePanel() {
           <>
             <table className="w-full text-sm">
               <thead><tr className="text-left text-[11px] uppercase tracking-wide text-slate-400"><th className="py-1 font-medium"></th><th className="py-1 text-right font-medium">Now</th><th className="py-1 text-right font-medium">After</th></tr></thead>
-              <tbody className="divide-y divide-[#F1F5F9]">
+              <tbody className="divide-y divide-line-soft">
                 <PRow label="Pool left" a={fv.remaining} b={after.remaining} />
                 <PRow label="Pool buffer left" a={fv.buffer.left} b={after.buffer.left} />
                 <PRow label="Daily safe limit" a={fv.dailyLimit} b={after.dailyLimit} />
@@ -374,7 +374,7 @@ function FoodPanel() {
           {list.length === 0 ? <Empty>Nothing under that budget with that much protein. Loosen a filter.</Empty> : (
             <ul className="space-y-2">
               {list.map((m) => (
-                <li key={m.id} className="rounded-lg border border-[#E5E7EB] p-3">
+                <li key={m.id} className="rounded-lg border border-line p-3">
                   <button className="flex w-full items-start justify-between gap-3 text-left" onClick={() => setOpen(open === m.id ? null : m.id)}>
                     <div className="min-w-0">
                       <div className="text-sm font-semibold">{m.title}</div>
@@ -389,7 +389,7 @@ function FoodPanel() {
                     </div>
                   </button>
                   {open === m.id && (
-                    <div className="mt-2 border-t border-[#F1F5F9] pt-2">
+                    <div className="mt-2 border-t border-line-soft pt-2">
                       <p className="text-xs text-slate-600">{m.how}</p>
                       <div className="mt-2 flex flex-wrap gap-2">
                         <Btn size="sm" variant="success" onClick={() => eat(m, false)}>Ate it — from my stock</Btn>
@@ -428,7 +428,7 @@ function History() {
   if (state.crisisEvents.length === 0) return null
   return (
     <Card title="Crisis history" subtitle="What you've handled — useful when it feels like you're always in trouble">
-      <ul className="divide-y divide-[#F1F5F9]">
+      <ul className="divide-y divide-line-soft">
         {state.crisisEvents.slice(0, 8).map((c) => (
           <li key={c.id} className="flex items-center justify-between gap-2 py-2 text-sm">
             <div className="min-w-0">

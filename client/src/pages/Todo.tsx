@@ -45,7 +45,7 @@ export function Todo() {
   return (
     <div className="space-y-4">
       <PageHeader
-        title="Smart To-Do List"
+        title="Tasks"
         sub={`${open.length} open · ${overdue.length} overdue · ${auto.length} auto-generated`}
         right={
           <div className="flex flex-wrap items-center gap-2">
@@ -74,7 +74,7 @@ export function Todo() {
             </thead>
             <tbody>
               {CATEGORY_ORDER.map((c) => (
-                <tr key={c} className="border-t border-[#F1F5F9]">
+                <tr key={c} className="border-t border-line-soft">
                   <td className="py-1.5 pr-2 text-slate-700">{CATEGORY_LABEL[c]}</td>
                   {PRIOS.map((p) => {
                     const n = open.filter((t) => t.category === c && t.priority === p).length

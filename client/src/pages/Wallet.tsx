@@ -29,7 +29,7 @@ export function WalletPage() {
   return (
     <div className="space-y-4">
       <PageHeader
-        title="₹ Wallet, Debt & Pool"
+        title="Money & debt"
         sub={fv.pending && fv.waitingFirst ? `First month starts ${fmtDate(c.nextPayday)} · salary on the ${f.paydayDay}${ord(f.paydayDay)}` : `Pay cycle ${fmtDate(c.start)} → ${fmtDate(c.end)} · ${c.daysLeft} days left · salary on the ${f.paydayDay}${ord(f.paydayDay)}`}
         right={<Btn variant="primary" onClick={() => openExpense()}><Plus size={15} /> Log expense</Btn>}
       />
@@ -143,7 +143,7 @@ function SalaryCard() {
       title="Salary allocation" icon={<TrendingUp size={14} />}
       action={<Btn size="sm" variant="outline" onClick={() => setEdit(true)}>Edit salary</Btn>}
     >
-      <ul className="divide-y divide-[#F1F5F9] text-sm">
+      <ul className="divide-y divide-line-soft text-sm">
         {rows.map((r) => (
           <li key={r.label} className="flex items-center justify-between gap-3 py-2">
             <div className="min-w-0">
@@ -227,7 +227,7 @@ function DebtCard() {
       )}
 
       {state.debtPayments.length > 0 && (
-        <ul className="mt-3 divide-y divide-[#F1F5F9] border-t border-[#F1F5F9] text-sm">
+        <ul className="mt-3 divide-y divide-line-soft border-t border-line-soft text-sm">
           {[...state.debtPayments].reverse().map((p) => (
             <li key={p.id} className="flex justify-between py-1.5">
               <span className="text-slate-500">{fmtDate(p.date)}{p.note ? ` · ${p.note}` : ''}</span>
@@ -269,7 +269,7 @@ function SavingsCard() {
         </Btn>
       </div>
       {sweeps.length > 0 && (
-        <ul className="mt-2 divide-y divide-[#F1F5F9] text-xs text-slate-600">
+        <ul className="mt-2 divide-y divide-line-soft text-xs text-slate-600">
           {[...sweeps].reverse().map((w) => (
             <li key={w.id} className="flex justify-between py-1">
               <span>Week of {fmtDate(w.weekStart)} {w.auto ? '' : '(manual)'}</span>
@@ -380,7 +380,7 @@ function ExpenseLog() {
         {cats.map((c) => <Chip key={c} active={filter === c} onClick={() => setFilter(c)}>{c}</Chip>)}
       </div>
       {list.length === 0 ? <Empty>Nothing logged yet. Tap “Log expense” — it takes one tap.</Empty> : (
-        <ul className="divide-y divide-[#F1F5F9]">
+        <ul className="divide-y divide-line-soft">
           {list.map((e) => (
             <li key={e.id} className="group flex items-center gap-3 py-2">
               <span className={cn('h-8 w-1 shrink-0 rounded-full', CAT_COLOUR[e.category])} />

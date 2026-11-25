@@ -9,7 +9,7 @@ import { cn, fmt, litres, num } from '../lib/util'
 
 const MOODS = ['😞', '😕', '😐', '🙂', '😄']
 const ta =
-  'w-full rounded-lg border border-[#E5E7EB] bg-white px-3 py-2 text-sm leading-relaxed placeholder:text-slate-400 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200'
+  'w-full rounded-lg border border-line bg-white px-3 py-2 text-sm leading-relaxed placeholder:text-slate-400 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200'
 
 export function Journal() {
   const { state, today, fv, update, toast } = useApp()
@@ -49,7 +49,7 @@ export function Journal() {
   return (
     <div className="space-y-4">
       <PageHeader
-        title="Daily Journal & Notes"
+        title="Journal"
         sub={fmtLong(date)}
         right={
           <div className="flex gap-1.5">
@@ -68,7 +68,7 @@ export function Journal() {
                 <div className="flex gap-1.5">
                   {MOODS.map((m, i) => (
                     <button key={m} onClick={() => setDraft({ ...draft, mood: i + 1 })} aria-label={`Mood ${i + 1}`}
-                      className={cn('h-10 w-10 rounded-lg border text-xl transition-colors', draft.mood === i + 1 ? 'border-slate-900 bg-slate-100' : 'border-[#E5E7EB] hover:bg-slate-50')}>{m}</button>
+                      className={cn('h-10 w-10 rounded-lg border text-xl transition-colors', draft.mood === i + 1 ? 'border-slate-900 bg-slate-100' : 'border-line hover:bg-slate-50')}>{m}</button>
                   ))}
                 </div>
               </div>
@@ -113,7 +113,7 @@ export function Journal() {
 
           {past.length > 0 && (
             <Card title="Earlier entries">
-              <ul className="divide-y divide-[#F1F5F9]">
+              <ul className="divide-y divide-line-soft">
                 {past.map((d) => (
                   <li key={d}>
                     <button onClick={() => setDate(d)} className="flex w-full items-center justify-between gap-2 py-2 text-left text-sm hover:text-slate-900">

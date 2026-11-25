@@ -125,7 +125,7 @@ export function StepTracker({ compact }: { compact?: boolean }) {
           onClick={() => update(toggleHabit(today, walk.id))}
           className={cn(
             'flex w-full items-center gap-2 rounded-lg border px-2.5 py-2 text-left text-xs font-medium transition-colors',
-            log.habits[walk.id] ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-[#E5E7EB] bg-white text-slate-700 hover:bg-slate-50',
+            log.habits[walk.id] ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-line bg-white text-slate-700 hover:bg-slate-50',
           )}
         >
           <span className={cn('grid h-4 w-4 shrink-0 place-items-center rounded border', log.habits[walk.id] ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-slate-300')}>
