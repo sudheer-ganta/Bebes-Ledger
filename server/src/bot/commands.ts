@@ -302,11 +302,21 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
   if (['bye', 'goodbye', 'cya', 'adios'].includes(cmd)) {
     return noChange(`Farewell, ${name}! Perambulate gracefully, keep yourself appropriately habilimented, and do not squander your lucre on frivolous balatrons! "John, how was I to know you were in peril? You're over there, loudly vocalizing!" 🎭`)
   }
-  if (['gn', 'goodnight', 'night', 'sleep'].includes(cmd)) {
-    return noChange(`Retire to your chambers, ${name}! "Let’s all go to bed and pray we don’t wake up." Wrap your weary carriage in the finest satin and slumber like an exiled queen. The stage awaits tomorrow! 🌙✨`)
+  if (['gn', 'goodnight', 'night', 'sleep', 'bonne nuit'].includes(cmd) || lower.startsWith('good night') || lower.startsWith('bonne nuit')) {
+    const nightQuotes = [
+      `Good night, ${name}. Do stop spiraling over tomorrow's trivialities and go to sleep—your worry lines are giving me secondhand agita! 🌙`,
+      `Bonne nuit, darling ${name}. Put away that glowing rectangle, lock the door, and for heaven’s sake, don't wander off with any local strays before sunrise! 🛌✨`,
+      `Good night, ${name}. Extinguish the lights and let us surrender ourselves to the sweet oblivion of sleep—wake me only if our fortune miraculously returns or the roof caves in. 😴🏰`,
+    ]
+    return noChange(pick(nightQuotes))
   }
-  if (['gm', 'morning', 'goodmorning', 'good morning'].includes(cmd)) {
-    return noChange(`Good morning, ${name}, my magnificent creation! "I don’t skate through life, darling. I walk through life in really nice shoes." Imbibe your potable crystalline libation, shake off the morning ennui, and seize the day with theatrical flair! 🌅`)
+  if (['gm', 'morning', 'goodmorning', 'good morning', 'bon matin'].includes(cmd) || lower.startsWith('good morning') || lower.startsWith('bon matin')) {
+    const morningQuotes = [
+      `Good morning, ${name}. Pray tell, did we survive the night, or have we woken up in a slightly worse tax bracket? Also, that ensemble looks like a cry for help. Imbibe your potable hydration, Bébé! 🌅`,
+      `Bon matin, ${name}! Rise and shine, my little socialite—though do keep your voice down, my ocular nerves are still adjusting to the harsh glare of poverty! ☀️`,
+      `Top of the morning, ${name}. Tell me you’ve already brewed something potable, because I refuse to face another day in this establishment unmedicated by caffeine! ☕`,
+    ]
+    return noChange(pick(morningQuotes))
   }
   if (['thanks', 'thank you', 'ty', 'thx'].includes(cmd)) {
     return noChange(`You are exquisitely welcome, ${name}, darling child! One does what one must to keep this household from the clutches of financial insolvency! 🥂`)
@@ -314,11 +324,35 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
   if (lower.includes('how are you') || ['sup', 'wassup', 'whats up'].includes(cmd)) {
     return noChange(`"I’m positively bedeviled with meetings, et cetera," ${name}! Languishing in artistic exile, but persevering with supreme elegance! Ready to tally your expenditures and keep our coffers pristine! 🎭`)
   }
+  if (lower.includes('pish') || lower.includes('posh')) {
+    return noChange(`"Pish posh, ${name}! You can't put a price on style, my dear! When one of us shines, all of us shine!" 💅`)
+  }
+  if (lower.includes('mediocrity') || lower.includes('allergic')) {
+    return noChange(`"I am allergic to mediocrity, ${name}! Darling, I am incapable of doing anything with subtlety!" 👑`)
+  }
+  if (lower.includes('rsvp') || lower.includes('party')) {
+    return noChange(`"I would be pleased to RSVP as pending, ${name}. I would never throw a party without a theme—that's just barbaric!" 🍸`)
+  }
+  if (lower.includes('style') || lower.includes('fashion') || lower.includes('sweater') || lower.includes('dress')) {
+    return noChange(`"You can't put a price on style, my dear ${name}! I do not merely walk through life, I perform it!" 👠✨`)
+  }
+  if (lower.includes('subtlety') || lower.includes('subtle')) {
+    return noChange(`"Darling, I am incapable of doing anything with subtlety! One must champagne oneself and say: I am ready for this!" 🍾`)
+  }
+  if (lower.includes('champagne')) {
+    return noChange(`"One must champagne oneself, ${name}, and say: I am ready for this!" 🥂`)
+  }
+  if (lower.includes('shine')) {
+    return noChange(`"When one of us shines, all of us shine, ${name}!" ✨`)
+  }
+  if (lower.includes('perform')) {
+    return noChange(`"I do not merely walk through life, ${name}. I perform it!" 🎭`)
+  }
   if (lower.includes('crow') || lower.includes('crows')) {
     return noChange(`"The crows don't just have eyes, ${name}. They have... wings." 🦅 A cinematic triumph! Now drink some water, darling.`)
   }
   if (lower.includes('wine') || lower.includes('fruit wine') || lower.includes('herb')) {
-    return noChange(`"The herb-a-flinge... fruit wine! This wine is awful. Get me another glass!" 🍷 Cheers, ${name}!`)
+    return noChange(`"The herb-a-flinge... fruit wine! This wine is awful. Give me another glass!" 🍷 Cheers, ${name}!`)
   }
   if (lower.includes('pelican')) {
     return noChange(`"${name}, stop acting like a disgruntled pelican!" — I believe that is my line, darling! 🎭`)
@@ -513,5 +547,12 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
     return done(next, `⚔️ ${fmt(n)} paid down! Still remaining in the shadows: ${fmt(computeFinance(next, today).debt.remaining)}`)
   }
 
-  return noChange(`I could not decipher "${text.length > 40 ? `${text.slice(0, 40)}…` : text}", ${name}.\n\n${HELP}`)
+  const chatFallbacks = [
+    `Pish posh, ${name}! "I am allergic to mediocrity," and "darling, I am incapable of doing anything with subtlety!" Might you and I confabulate like civilized souls? If you bear news of expenditures, confess them (e.g. "120 auto" or "ate 3 eggs"), or send "today" for our grand audit! 🎭`,
+    `"You can't put a price on style, my dear," ${name}! I do not merely walk through life, I perform it! What dramatic revelation or pecuniary tally do you bring before your mother today? (Send "today" for your ledger, or "help" for my repertoire!) ✨`,
+    `"One must champagne oneself, ${name}, and say: I am ready for this!" Though if this is about an unplanned disbursement, pray tell me before I suffer an apoplexy! Send "today", "gym", or "help" if you are feeling adrift in ennui. 🥂`,
+    `"When one of us shines, all of us shine," ${name}! But do keep your voice down, my ocular nerves are still recovering from the glare of poverty! Are we logging lucre, water, or perambulations? Send "today" to inspect our coffers. 💅`,
+    `"I would be pleased to RSVP as pending," ${name}! What whimsical balatron of a thought was that? Speak plainly, child—have you hydrated, or are we confronting an impending fiscal crisis? Send "today" or "help" whenever you wish! 🎭`,
+  ]
+  return noChange(pick(chatFallbacks))
 }
