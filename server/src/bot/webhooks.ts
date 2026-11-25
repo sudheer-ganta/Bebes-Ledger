@@ -75,7 +75,6 @@ export const botDiagnostics = {
     phoneId: '',
     allowed: [] as string[],
     tokenLength: 0,
-    tokenPrefix: '',
   },
 }
 
@@ -89,7 +88,6 @@ export function botRouter(cfg: BotConfig, deps: BotDeps): Router {
       phoneId: wa.phoneId,
       allowed: wa.allowed,
       tokenLength: wa.token.length,
-      tokenPrefix: wa.token.slice(0, 10) + '...',
     }
 
     // Meta calls this once when you save the webhook in the developer dashboard.
@@ -112,7 +110,8 @@ export function botRouter(cfg: BotConfig, deps: BotDeps): Router {
         at: new Date().toISOString(),
         count: messages.length,
         froms: messages.map((m) => m.from),
-        texts: messages.map((m) => m.text?.body),
+        // lengths only: message text (amounts, plans) never leaves the server
+        textLengths: messages.map((m) => m.text?.body?.length ?? 0),
       }
       for (const m of messages) {
         if (!remember(m.id)) continue

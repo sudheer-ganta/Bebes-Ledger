@@ -14,11 +14,12 @@ A leading `@` is optional; `@spent 120 auto` and `spent 120 auto` do the same th
 | `steps 3000` · `steps set 6000` · `walk` | Adds steps / sets the total so far / ticks the 60-min gym walk. |
 | `ate 3 eggs p20` | Logs a meal in the right slot for the time of day. `p20` = 20 g protein, `₹150` = outside-meal cost. |
 | `task buy soap tomorrow` · `task pay rent !` | Adds a task (`!` = high priority, `today` / `tomorrow` set the date). |
-| `done soap` · `tasks` | Completes the first matching task / lists open ones. |
+| `done soap` · `done 2` · `tasks` | Completes the first matching task (or number 2 from the `tasks` list; auto tasks like rent get marked paid) / lists open ones. |
+| `paid rent` · `paid bills` | Marks this month's rent / bills paid. They come from the money set aside at salary, so they are not counted as pocket spending. |
 | `salary 25160` | Enters this month's salary and allocates it. |
 | `debt 2000` | Logs a debt payment. |
 | `today` | What you can spend today and this week, pool, water, steps, to-dos. |
-| `undo` | Removes the last expense. |
+| `undo` | Removes the last expense you logged (chat or by hand). Grocery checkouts and crisis entries are undone in the app. |
 
 ## Why not your own WhatsApp chat?
 WhatsApp gives programs no way to read your personal chats, including "Message yourself". The only official way is a **separate bot number** that you chat with. Tools that log into your personal WhatsApp by QR code to read your messages exist, but they break WhatsApp's rules, can get your number banned, and need a computer logged in all the time. This bot deliberately doesn't do that. Using an `@` prefix inside the bot chat is optional, because everything sent to that chat is a command anyway.

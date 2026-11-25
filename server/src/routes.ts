@@ -19,15 +19,16 @@ api.get('/health', (_req, res) => {
   res.json({ ok: true, db: mongoose.connection.readyState === 1 })
 })
 
-api.get('/bot-status', (_req, res) => {
-  res.json(botDiagnostics)
-})
-
 // ---------- optional API key ----------
 api.use((req, res, next) => {
   if (!env.apiKey) return next()
   if (req.header('x-api-key') === env.apiKey) return next()
   res.status(401).json({ error: 'Invalid or missing x-api-key' })
+})
+
+// bot diagnostics sit behind the API key: they show your number and message times
+api.get('/bot-status', (_req, res) => {
+  res.json(botDiagnostics)
 })
 
 // ---------- whole-state sync used by the web app ----------

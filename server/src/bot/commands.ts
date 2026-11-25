@@ -40,11 +40,12 @@ export const HELP = [
   '• undo — Erase a tragic fiscal misstep',
 ].join('\n')
 
+// first match wins: rides, outings, cooked/ordered food, then raw groceries (so "chicken biryani" is Outside Food)
 const CATEGORY_WORDS: Array<[ExpenseCategory, RegExp]> = [
-  ['Groceries', /\b(veg|vegetable|vegetables|grocery|groceries|eggs?|milk|fruit|fruits|rice|atta|dal|paneer|chicken|curd|kirana|bigbasket|blinkit|zepto)\b/],
   ['Rides', /\b(auto|ola|uber|rapido|metro|bus|cab|bike|petrol|ride|taxi|train)\b/],
   ['Movies/Dates', /\b(movie|movies|cinema|pvr|date|gift|party|show|concert|drinks|pub)\b/],
   ['Outside Food', /\b(chai|tea|coffee|snack|snacks|lunch|dinner|breakfast|biryani|food|swiggy|zomato|restaurant|ordered|juice|dosa|idli|meal|mess)\b/],
+  ['Groceries', /\b(veg|vegetable|vegetables|grocery|groceries|eggs?|milk|fruit|fruits|rice|atta|dal|paneer|chicken|curd|kirana|bigbasket|blinkit|zepto)\b/],
 ]
 const TAGS: Record<string, ExpenseCategory> = {
   groceries: 'Groceries', grocery: 'Groceries', food: 'Outside Food', outside: 'Outside Food',
@@ -101,6 +102,19 @@ function pickNoRepeat(key: string, arr: string[]): string {
 }
 
 let lastMorningCount = 0
+let lastMorningAt = 0
+
+/** Whole-word / whole-phrase match, so "folder" doesn't trigger "fold" or "machine" trigger "shine". */
+const hasWord = (text: string, ...words: string[]): boolean =>
+  words.some((w) => new RegExp(`(?:^|[^\\p{L}\\p{N}])${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:$|[^\\p{L}\\p{N}])`, 'iu').test(text))
+
+const UNITS = new Set(['g', 'gm', 'gms', 'gram', 'grams', 'kg', 'kgs', 'ml', 'l', 'ltr', 'litre', 'litres', 'liter', 'pc', 'pcs', 'dozen', 'packet', 'packets', 'x'])
+/** Words that mean the message is about steps/protein, not money ("i walked 5000 steps"). */
+const NOT_MONEY = /\b(steps?|paces|protein)\b/i
+
+/** Auto tasks first, then yours: the order the "tasks" list shows and "done 2" counts in. */
+const openTasks = (s: AppState, fv: ReturnType<typeof computeFinance>, now: Date) =>
+  [...deriveAutoTasks(s, fv, now), ...s.tasks].filter((t) => !t.done)
 
 const spendToday = (s: AppState, date: string): number =>
   s.expenses.filter((e) => e.date === date).reduce((acc, e) => acc + e.amount, 0)
@@ -121,7 +135,7 @@ function moiraPraiseThrift(name: string, left: number, limit: number, weekendPot
   const quotes = [
     `💰 Left: ${fmt(left)} of ${fmt(limit)}. Surviving on photosynthesis, ${name}? How delightfully monastic.`,
     `💰 Left: ${fmt(left)}. You are blind to reality, ${name}, and for that I am most proud.`,
-    `💰 Left: ${fmt(left)}. Johnny would weep. Stashing it for that ₹1.5k weekend movie nonsense?`,
+    `💰 Left: ${fmt(left)}. Johnny would weep. Weekend fund sits at ${fmt(weekendPot)} — guard it for the cinema nonsense.`,
     `💰 Left: ${fmt(left)}. Look at you, my little financial ascetic. Don't blow it tonight.`,
   ]
   return pickNoRepeat('thrift', quotes)
@@ -201,7 +215,7 @@ function weekSummary(s: AppState, now: Date): string {
     `• Groceries & Sustenance Left: ${fmt(Math.max(0, fv.groceries.left))}`,
     `• Emergency Buffer: ${fmt(Math.max(0, fv.buffer.left))}`,
     '',
-    fv.todayLeft >= 0
+    fv.weekLeft >= 0
       ? `✨ A magnificent display of maternal restraint, ${name}! Your weekend self will weep with gratitude!`
       : `⚠️ Alack! A slight indulgence this week, ${name} — let us practice theatrical thrift over the coming days!`
   ]
@@ -249,10 +263,12 @@ function gymSplit(s: AppState, now: Date): string {
   return `🏛️ ${focus} — ${name}\n${pick(gymQuotes)}\nDid you walk your 60 minutes, or are you lounging like a frippet?`
 }
 
-function mealSuggestions(s: AppState, slot?: string): string {
+function mealSuggestions(s: AppState, now: Date, slot?: string): string {
   const name = userName(s)
-  const chosenSlot = slot || 'Meal'
-  const samples = CRISIS_MEALS.slice(0, 2)
+  const chosenSlot = slot ? slot[0].toUpperCase() + slot.slice(1) : slotFor(now.getHours())
+  // rotate through the cheap meals by day and slot instead of always showing the same two
+  const start = (now.getDate() * 2 + chosenSlot.length) % CRISIS_MEALS.length
+  const samples = [CRISIS_MEALS[start], CRISIS_MEALS[(start + 1) % CRISIS_MEALS.length]]
 
   const lines = [
     `🍳 ${chosenSlot} — ${name}`,
@@ -296,10 +312,14 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
   if (['help', '?', 'menu', 'start', '/start', '/help'].includes(cmd)) return noChange(HELP)
 
   // ---- Moira Conversational Easter Eggs & Greetings
+  // the whole message must be a greeting: "500 gm paneer" or "task morning run" are not
   const isMorning =
-    /\b(morning|mrng|good morning|good mrng|gm|good morrow|bon matin)\b/i.test(lower) ||
-    ['gm', 'mrng', 'morning'].includes(cmd)
+    !/\d/.test(lower) &&
+    /^(?:(?:good|top of the)\s+)?(?:morning|mrng|morrow|gm|bon matin)(?:\s+(?:mom|ma|moira|darling|bebe|bébé))?[\s!.🌅☀️]*$/iu.test(lower)
   if (isMorning) {
+    // greetings hours apart are a new morning, not spam
+    if (now.getTime() - lastMorningAt > 6 * 3600_000) lastMorningCount = 0
+    lastMorningAt = now.getTime()
     lastMorningCount++
     if (lastMorningCount >= 3) {
       return noChange(
@@ -322,127 +342,13 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
     return noChange(pickNoRepeat('morning', morningQuotes))
   }
   lastMorningCount = 0
-  if (lower.includes('did you sleep') || lower.includes('did u slept') || lower.includes('slept last night') || lower.includes('sleep last night')) {
-    return noChange(`Sleep? In this establishment, ${name}?! I was kept awake by the tragic acoustics and Johnny's fitful tossing. What do you want?`)
-  }
-  if (lower.includes('rude')) {
-    return noChange(`Rude? I am not rude, ${name}, I am an artist starved of glamour. Now what did you want?`)
-  }
-  if (lower.includes("didn't blow") || lower.includes("didnt blow") || lower.includes("haven't spent") || lower.includes("havent spent")) {
-    return noChange(`You didn't blow our money? Well, miracles never cease. Tell me what's left or confess your damage, ${name}.`)
-  }
-  if (['what', 'why', 'huh', 'what?', 'why?'].includes(cmd) && text.length <= 10) {
-    return noChange(`What do you mean "what", ${name}? Use your words, darling! Did we spend money or not?`)
-  }
-  if (['fine', 'ok', 'okay', 'k', 'sure', 'alright'].includes(cmd) && text.length <= 10) {
-    return noChange(`Good. Now hydrate and let me languish in peace, or tell me what you bought.`)
-  }
-  if (lower.includes('are you an ai') || lower.includes('are you ai') || lower.includes('are you a bot') || lower.includes('are you bot') || lower.includes('who are you')) {
-    return noChange(`An AI? A bot?! How dare you, ${name}! I am Moira Rose, award-winning actress of stage and screen, reduced to overseeing your dismal purse strings. Now log your pennies!`)
-  }
-  if (['hi', 'hello', 'hey', 'heyy', 'hola'].includes(cmd)) {
-    return noChange(`What do you want, ${name}? "I’m trying very hard not to connect with people right now." Confess your damage or let me languish in peace.`)
-  }
-  if (['bye', 'goodbye', 'cya', 'adios'].includes(cmd)) {
-    return noChange(`Goodbye, ${name}. Try not to squander our coins on frivolous balatrons.`)
-  }
-  if (['gn', 'goodnight', 'night', 'sleep', 'bonne nuit'].includes(cmd) || lower.startsWith('good night') || lower.startsWith('bonne nuit')) {
-    const nightQuotes = [
-      `Good night, ${name}. Stop spiraling over trivialities, your worry lines are giving me agita. 🌙`,
-      `Bonne nuit, ${name}. Put away that rectangle and don't wander off with local strays. 🛌`,
-      `Good night, ${name}. Extinguish the lights and wake me only if our fortune returns. 😴`,
-    ]
-    return noChange(pickNoRepeat('night', nightQuotes))
-  }
-  if (['thanks', 'thank you', 'ty', 'thx'].includes(cmd)) {
-    return noChange(`You're welcome, ${name}. Don't expect applause for the bare minimum.`)
-  }
-  if (lower.includes('budget') || lower.includes('how much') || lower.includes('can i spend') || lower.includes('allowance')) {
-    const fv = computeFinance(state, today)
-    const spentToday = spendToday(state, today)
-    if (fv.pending) {
-      const plannedPerDay = Math.round(fv.plan.pocket / fv.cycle.totalDays)
-      const leftToday = plannedPerDay - spentToday
-      return noChange(
-        leftToday < 0
-          ? `😱 Over planned limit by ${fmt(-leftToday)}, ${name}! Stop spending!`
-          : `💰 Plan is ${fmt(plannedPerDay)} a day. You have ${fmt(leftToday)} left today (awaiting salary in ${fv.cycle.daysToPayday}d). Try not to blow it on nonsense.`
-      )
-    }
-    const leftToday = fv.todayLeft
-    return noChange(
-      leftToday < 0
-        ? `😱 Over budget by ${fmt(-leftToday)}, ${name}! Stop spending!`
-        : `💰 Today's limit: ${fmt(fv.dailyLimit)}. Left today: ${fmt(leftToday)}. Try not to blow it on nonsense.`
-    )
-  }
-  if (lower.includes('how are you') || ['sup', 'wassup', 'whats up'].includes(cmd)) {
-    return noChange(`I’m bedeviled with meetings and suffering from your financial choices, ${name}. What do you need?`)
-  }
-  if (lower.includes('pish') || lower.includes('posh')) {
-    return noChange(`"Pish posh, ${name}! You can't put a price on style, my dear! When one of us shines, all of us shine!" 💅`)
-  }
-  if (lower.includes('mediocrity') || lower.includes('allergic')) {
-    return noChange(`"I am allergic to mediocrity, ${name}! Darling, I am incapable of doing anything with subtlety!" 👑`)
-  }
-  if (lower.includes('rsvp') || lower.includes('party')) {
-    return noChange(`"I would be pleased to RSVP as pending, ${name}. I would never throw a party without a theme—that's just barbaric!" 🍸`)
-  }
-  if (lower.includes('style') || lower.includes('fashion') || lower.includes('sweater') || lower.includes('dress')) {
-    return noChange(`"You can't put a price on style, my dear ${name}! I do not merely walk through life, I perform it!" 👠✨`)
-  }
-  if (lower.includes('subtlety') || lower.includes('subtle')) {
-    return noChange(`"Darling, I am incapable of doing anything with subtlety! One must champagne oneself and say: I am ready for this!" 🍾`)
-  }
-  if (lower.includes('champagne')) {
-    return noChange(`"One must champagne oneself, ${name}, and say: I am ready for this!" 🥂`)
-  }
-  if (lower.includes('shine')) {
-    return noChange(`"When one of us shines, all of us shine, ${name}!" ✨`)
-  }
-  if (lower.includes('perform')) {
-    return noChange(`"I do not merely walk through life, ${name}. I perform it!" 🎭`)
-  }
-  if (lower.includes('crow') || lower.includes('crows')) {
-    return noChange(`"The crows don't just have eyes, ${name}. They have... wings." 🦅 A cinematic triumph! Now drink some water, darling.`)
-  }
-  if (lower.includes('wine') || lower.includes('fruit wine') || lower.includes('herb')) {
-    return noChange(`"The herb-a-flinge... fruit wine! This wine is awful. Give me another glass!" 🍷 Cheers, ${name}!`)
-  }
-  if (lower.includes('pelican')) {
-    return noChange(`"${name}, stop acting like a disgruntled pelican!" — I believe that is my line, darling! 🎭`)
-  }
-  if (lower.includes('gossip')) {
-    return noChange(`"Gossip is the devil's telephone, ${name}. Best to just hang up." ...Though do tell me what happened! ☎️`)
-  }
-  if (lower.includes('turtle')) {
-    return noChange(`"Turtles do not pets make, ${name}. The poor things are riddled with a myriad of diseases. You may as well tie a leash around a raw chicken cutlet." 🐢`)
-  }
-  if (lower.includes('shoes') || lower.includes('skate')) {
-    return noChange(`"I don’t skate through life, ${name}. I walk through life in really nice shoes." 👠`)
-  }
-  if (lower.includes('cheese') || lower.includes('fold')) {
-    return noChange(`"What does 'fold in the cheese' mean, ${name}?! YOU FOLD IT IN! I cannot show you everything! Well, can you show me one thing?!" 🧀`)
-  }
-  if (lower.includes('condom')) {
-    return noChange(`"I'm sorry I'm not a condom, ${name}!" 🎭`)
-  }
-  if (lower.includes('apathy')) {
-    return noChange(`"I am suddenly overwhelmed by a wave of apathy, ${name}." 💅`)
-  }
-  if (lower.includes('towel')) {
-    return noChange(`"I have asked you thrice now for a towel so that I may wash this town off my body, ${name}!" 🧖‍♀️`)
-  }
-  if (lower.includes('thumb')) {
-    return noChange(`"I’m not going to sit here and take this from someone who looks like a thumb, ${name}!" 🎭`)
-  }
 
   if (['today', 'day', 'status', 'balance', 'bal', 'left', 'summary', '/today'].includes(cmd)) return noChange(summary(state, now))
   if (['week', 'weekly', '/week'].includes(cmd)) return noChange(weekSummary(state, now))
   if (['month', 'monthly', '/month'].includes(cmd)) return noChange(monthSummary(state, now))
   if (['gym', 'workout', 'exercise', 'split'].includes(cmd)) return noChange(gymSplit(state, now))
   if (['meals', 'meal', 'food', 'breakfast', 'lunch', 'dinner', 'snack', 'cook'].includes(cmd) && !restTokens.length) {
-    return noChange(mealSuggestions(state, cmd !== 'meals' && cmd !== 'meal' && cmd !== 'food' ? cmd : undefined))
+    return noChange(mealSuggestions(state, now, cmd !== 'meals' && cmd !== 'meal' && cmd !== 'food' ? cmd : undefined))
   }
   if (cmd === 'savings' || cmd === 'vault') {
     const fv = computeFinance(state, today)
@@ -456,27 +362,13 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
     ].join('\n'))
   }
 
-  // ---- expense: "spent 120 auto" | "120 auto" | "chai 20"
-  const isExpenseWord = ['spent', 'spend', 'paid', 'pay', 'exp', 'expense', 'bought', 'buy'].includes(cmd)
-  const firstAmount = parseAmount(cmdRaw)
-  const tokens = isExpenseWord ? restTokens : text.split(' ')
-  const amountIdx = tokens.findIndex((t) => parseAmount(t) !== null)
-  const looksLikeExpense =
-    isExpenseWord || firstAmount !== null || (amountIdx >= 0 && tokens.length <= 5 && !['task', 'todo', 'add', 'ate', 'water', 'steps', 'salary', 'debt', 'done'].includes(cmd))
-  if (looksLikeExpense && amountIdx >= 0) {
-    const amount = parseAmount(tokens[amountIdx])!
-    const words = tokens.filter((_, i) => i !== amountIdx)
-    const tag = words.find((w) => w.startsWith('#'))?.slice(1).toLowerCase()
-    const title = words.filter((w) => !w.startsWith('#')).join(' ').trim()
-    const category = (tag && TAGS[tag]) || guessCategory(`${title} ${cmd}`)
-    const next = A.addExpense({ amount, title: title || category, category, date: today })(state)
-    const reaction = moiraExpenseReaction(name, amount)
-    return done(next, `✨ Logged ${fmt(amount)} for ${category}${title ? ` (${title})` : ''}. ${reaction}\n${limitLine(next, now)}`)
-  }
-  if (isExpenseWord) return noChange(`How much lucre was surrendered, ${name}? Tell me the damage, darling!`)
-
   if (cmd === 'undo') {
-    const last = [...state.expenses].sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]
+    // only things you log by hand or by chat; grocery checkouts and crisis entries are undone in the app
+    // newest by time; ties (same millisecond) go to the one added last
+    const last = state.expenses
+      .map((e, i) => ({ e, i }))
+      .filter(({ e }) => e.source === 'manual' || e.source === 'meal')
+      .sort((a, b) => b.e.createdAt.localeCompare(a.e.createdAt) || b.i - a.i)[0]?.e
     if (!last) return noChange('There is nothing to undo, darling. The slate is pristine!')
     const next = A.deleteExpense(last.id)(state)
     return done(next, `Expunged ${fmt(last.amount)} (${last.title}) from the record, ${name}!\n${limitLine(next, now)}`)
@@ -563,13 +455,26 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
   if (['done', 'finished', 'complete', 'completed', 'tick'].includes(cmd)) {
     const q = rest.toLowerCase()
     if (!q) return noChange(`Which chore was vanquished, ${name}? Tell your mother!`)
-    const t = state.tasks.find((x) => !x.done && x.title.toLowerCase().includes(q))
-    if (!t) return noChange(`No open obligation matches "${rest}", ${name}! Are you inventing phantom chores?`)
-    return done(A.toggleTask(t.id)(state), `✨ Vanquished! "${t.title}" is struck from existence! Cinderella could never, ${name}!`)
+    // same list, same order as the "tasks" reply, so "done 2" means item 2 there
+    const fv = computeFinance(state, today)
+    const open = openTasks(state, fv, now)
+    const n = /^#?(\d{1,2})$/.exec(q)
+    // by words: your own tasks first, so "done recharge" ticks your task rather than marking the bills paid
+    const byWords = (x: (typeof open)[number]) => x.title.toLowerCase().includes(q)
+    const t = n ? open[Number(n[1]) - 1] : (open.find((x) => !x.id.startsWith('auto:') && byWords(x)) ?? open.find(byWords))
+    if (!t) {
+      return noChange(n
+        ? `There is no obligation number ${n[1]}, ${name}. Send "tasks" to see the list.`
+        : `No open obligation matches "${rest}", ${name}! Are you inventing phantom chores?`)
+    }
+    const next = t.id.startsWith('auto:')
+      ? A.completeAutoTask(t.id, fv.debt.installmentLeft, today)(state)
+      : A.toggleTask(t.id)(state)
+    return done(next, `✨ Vanquished! "${t.title}" is struck from existence! Cinderella could never, ${name}!`)
   }
   if (['tasks', 'list', 'todos'].includes(cmd)) {
     const fv = computeFinance(state, today)
-    const open = [...deriveAutoTasks(state, fv, now), ...state.tasks].filter((t) => !t.done)
+    const open = openTasks(state, fv, now)
     return noChange(open.length ? `🎭 Sordid Obligations Awaiting Execution (${open.length}):\n${open.slice(0, 10).map((t, i) => `${i + 1}. ${t.title}${t.priority === 'high' ? ' ⚡' : ''}`).join('\n')}` : `✨ The stage is clear, ${name}! Not a single chore remains! 🥂`)
   }
 
@@ -592,6 +497,159 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
     const next = A.logDebtPayment(n, today)(state)
     if (next === state) return noChange(`The shackles are already gone, ${name}! We owe not a single pence to anyone! 🥂`)
     return done(next, `⚔️ ${fmt(n)} paid down! Still remaining in the shadows: ${fmt(computeFinance(next, today).debt.remaining)}`)
+  }
+
+  // ---- expense: "spent 120 auto" | "120 auto" | "chai 20"
+  const isExpenseWord = ['spent', 'spend', 'paid', 'pay', 'exp', 'expense', 'bought', 'buy'].includes(cmd)
+  const firstAmount = parseAmount(cmdRaw)
+  const tokens = isExpenseWord ? restTokens : text.split(' ')
+  // "500 gm paneer 120": 500 is a quantity (followed by a unit), 120 is the price
+  const amountIdx = tokens.findIndex((t, i) => parseAmount(t) !== null && !UNITS.has((tokens[i + 1] ?? '').toLowerCase()))
+  const looksLikeExpense =
+    (isExpenseWord || firstAmount !== null || (amountIdx >= 0 && tokens.length <= 5)) && !NOT_MONEY.test(lower)
+  // rent and bills are already set aside from salary: mark them paid instead of spending pocket money twice
+  if ((isExpenseWord || looksLikeExpense) && /\b(rent|bills?)\b/i.test(lower)) {
+    const fv = computeFinance(state, today)
+    if (!fv.pending) {
+      const isRent = /\brent\b/i.test(lower)
+      const key = `${fv.cycle.key}:${isRent ? 'rent' : 'fixed'}`
+      if (state.paid[key]) return noChange(`${isRent ? 'Rent' : 'The bills'} already marked paid this cycle, ${name}. Paying twice is not generosity, it is madness.`)
+      return done(
+        A.setPaid(key, true)(state),
+        `✅ ${isRent ? `PG rent (${fmt(state.finance.rent)})` : `Bills (${fmt(state.finance.fixed)})`} marked paid — it came from the money set aside at salary, not your pocket pool, ${name}.\n${limitLine(state, now)}`,
+      )
+    }
+  }
+  if (looksLikeExpense && amountIdx >= 0) {
+    const amount = parseAmount(tokens[amountIdx])!
+    const words = tokens.filter((_, i) => i !== amountIdx)
+    const tag = words.find((w) => w.startsWith('#'))?.slice(1).toLowerCase()
+    const title = words.filter((w) => !w.startsWith('#')).join(' ').trim()
+    const category = (tag && TAGS[tag]) || guessCategory(`${title} ${cmd}`)
+    const next = A.addExpense({ amount, title: title || category, category, date: today })(state)
+    const reaction = moiraExpenseReaction(name, amount)
+    return done(next, `✨ Logged ${fmt(amount)} for ${category}${title ? ` (${title})` : ''}. ${reaction}\n${limitLine(next, now)}`)
+  }
+  if (isExpenseWord) return noChange(`How much lucre was surrendered, ${name}? Tell me the damage, darling!`)
+
+  // ---- conversation: only reached when the message was not a command or an expense
+  if (hasWord(lower, 'did you sleep') || hasWord(lower, 'did u slept') || hasWord(lower, 'slept last night') || hasWord(lower, 'sleep last night')) {
+    return noChange(`Sleep? In this establishment, ${name}?! I was kept awake by the tragic acoustics and Johnny's fitful tossing. What do you want?`)
+  }
+  if (hasWord(lower, 'rude')) {
+    return noChange(`Rude? I am not rude, ${name}, I am an artist starved of glamour. Now what did you want?`)
+  }
+  if (hasWord(lower, "didn't blow") || hasWord(lower, "didnt blow") || hasWord(lower, "haven't spent") || hasWord(lower, "havent spent")) {
+    return noChange(`You didn't blow our money? Well, miracles never cease. Tell me what's left or confess your damage, ${name}.`)
+  }
+  if (['what', 'why', 'huh', 'what?', 'why?'].includes(cmd) && text.length <= 10) {
+    return noChange(`What do you mean "what", ${name}? Use your words, darling! Did we spend money or not?`)
+  }
+  if (['fine', 'ok', 'okay', 'k', 'sure', 'alright'].includes(cmd) && text.length <= 10) {
+    return noChange(`Good. Now hydrate and let me languish in peace, or tell me what you bought.`)
+  }
+  if (hasWord(lower, 'are you an ai') || hasWord(lower, 'are you ai') || hasWord(lower, 'are you a bot') || hasWord(lower, 'are you bot') || hasWord(lower, 'who are you')) {
+    return noChange(`An AI? A bot?! How dare you, ${name}! I am Moira Rose, award-winning actress of stage and screen, reduced to overseeing your dismal purse strings. Now log your pennies!`)
+  }
+  if (['hi', 'hello', 'hey', 'heyy', 'hola'].includes(cmd)) {
+    return noChange(`What do you want, ${name}? "I’m trying very hard not to connect with people right now." Confess your damage or let me languish in peace.`)
+  }
+  if (['bye', 'goodbye', 'cya', 'adios'].includes(cmd)) {
+    return noChange(`Goodbye, ${name}. Try not to squander our coins on frivolous balatrons.`)
+  }
+  if (['gn', 'goodnight', 'night', 'sleep', 'bonne nuit'].includes(cmd) || lower.startsWith('good night') || lower.startsWith('bonne nuit')) {
+    const nightQuotes = [
+      `Good night, ${name}. Stop spiraling over trivialities, your worry lines are giving me agita. 🌙`,
+      `Bonne nuit, ${name}. Put away that rectangle and don't wander off with local strays. 🛌`,
+      `Good night, ${name}. Extinguish the lights and wake me only if our fortune returns. 😴`,
+    ]
+    return noChange(pickNoRepeat('night', nightQuotes))
+  }
+  if (['thanks', 'thank you', 'ty', 'thx'].includes(cmd)) {
+    return noChange(`You're welcome, ${name}. Don't expect applause for the bare minimum.`)
+  }
+  if (hasWord(lower, 'water') && /\b(how much|status|left)\b/.test(lower)) {
+    const st = dayStats(state, today)
+    return noChange(`💧 Water: ${litres(st.waterMl)} / ${litres(st.waterTarget)}. Drink up, ${name}.`)
+  }
+  if (hasWord(lower, 'budget') || hasWord(lower, 'how much') || hasWord(lower, 'can i spend') || hasWord(lower, 'allowance')) {
+    const fv = computeFinance(state, today)
+    const spentToday = spendToday(state, today)
+    if (fv.pending) {
+      const plannedPerDay = Math.round(fv.plan.pocket / fv.cycle.totalDays)
+      const leftToday = plannedPerDay - spentToday
+      return noChange(
+        leftToday < 0
+          ? `😱 Over planned limit by ${fmt(-leftToday)}, ${name}! Stop spending!`
+          : `💰 Plan is ${fmt(plannedPerDay)} a day. You have ${fmt(leftToday)} left today (awaiting salary in ${fv.cycle.daysToPayday}d). Try not to blow it on nonsense.`
+      )
+    }
+    const leftToday = fv.todayLeft
+    return noChange(
+      leftToday < 0
+        ? `😱 Over budget by ${fmt(-leftToday)}, ${name}! Stop spending!`
+        : `💰 Today's limit: ${fmt(fv.dailyLimit)}. Left today: ${fmt(leftToday)}. Try not to blow it on nonsense.`
+    )
+  }
+  if (hasWord(lower, 'how are you') || ['sup', 'wassup', 'whats up'].includes(cmd)) {
+    return noChange(`I’m bedeviled with meetings and suffering from your financial choices, ${name}. What do you need?`)
+  }
+  if (hasWord(lower, 'pish') || hasWord(lower, 'posh')) {
+    return noChange(`"Pish posh, ${name}! You can't put a price on style, my dear! When one of us shines, all of us shine!" 💅`)
+  }
+  if (hasWord(lower, 'mediocrity') || hasWord(lower, 'allergic')) {
+    return noChange(`"I am allergic to mediocrity, ${name}! Darling, I am incapable of doing anything with subtlety!" 👑`)
+  }
+  if (hasWord(lower, 'rsvp') || hasWord(lower, 'party')) {
+    return noChange(`"I would be pleased to RSVP as pending, ${name}. I would never throw a party without a theme—that's just barbaric!" 🍸`)
+  }
+  if (hasWord(lower, 'style') || hasWord(lower, 'fashion') || hasWord(lower, 'sweater') || hasWord(lower, 'dress')) {
+    return noChange(`"You can't put a price on style, my dear ${name}! I do not merely walk through life, I perform it!" 👠✨`)
+  }
+  if (hasWord(lower, 'subtlety') || hasWord(lower, 'subtle')) {
+    return noChange(`"Darling, I am incapable of doing anything with subtlety! One must champagne oneself and say: I am ready for this!" 🍾`)
+  }
+  if (hasWord(lower, 'champagne')) {
+    return noChange(`"One must champagne oneself, ${name}, and say: I am ready for this!" 🥂`)
+  }
+  if (hasWord(lower, 'shine')) {
+    return noChange(`"When one of us shines, all of us shine, ${name}!" ✨`)
+  }
+  if (hasWord(lower, 'perform')) {
+    return noChange(`"I do not merely walk through life, ${name}. I perform it!" 🎭`)
+  }
+  if (hasWord(lower, 'crow') || hasWord(lower, 'crows')) {
+    return noChange(`"The crows don't just have eyes, ${name}. They have... wings." 🦅 A cinematic triumph! Now drink some water, darling.`)
+  }
+  if (hasWord(lower, 'wine') || hasWord(lower, 'fruit wine') || hasWord(lower, 'herb')) {
+    return noChange(`"The herb-a-flinge... fruit wine! This wine is awful. Give me another glass!" 🍷 Cheers, ${name}!`)
+  }
+  if (hasWord(lower, 'pelican')) {
+    return noChange(`"${name}, stop acting like a disgruntled pelican!" — I believe that is my line, darling! 🎭`)
+  }
+  if (hasWord(lower, 'gossip')) {
+    return noChange(`"Gossip is the devil's telephone, ${name}. Best to just hang up." ...Though do tell me what happened! ☎️`)
+  }
+  if (hasWord(lower, 'turtle')) {
+    return noChange(`"Turtles do not pets make, ${name}. The poor things are riddled with a myriad of diseases. You may as well tie a leash around a raw chicken cutlet." 🐢`)
+  }
+  if (hasWord(lower, 'shoes') || hasWord(lower, 'skate')) {
+    return noChange(`"I don’t skate through life, ${name}. I walk through life in really nice shoes." 👠`)
+  }
+  if (hasWord(lower, 'cheese') || hasWord(lower, 'fold')) {
+    return noChange(`"What does 'fold in the cheese' mean, ${name}?! YOU FOLD IT IN! I cannot show you everything! Well, can you show me one thing?!" 🧀`)
+  }
+  if (hasWord(lower, 'condom')) {
+    return noChange(`"I'm sorry I'm not a condom, ${name}!" 🎭`)
+  }
+  if (hasWord(lower, 'apathy')) {
+    return noChange(`"I am suddenly overwhelmed by a wave of apathy, ${name}." 💅`)
+  }
+  if (hasWord(lower, 'towel')) {
+    return noChange(`"I have asked you thrice now for a towel so that I may wash this town off my body, ${name}!" 🧖‍♀️`)
+  }
+  if (hasWord(lower, 'thumb')) {
+    return noChange(`"I’m not going to sit here and take this from someone who looks like a thumb, ${name}!" 🎭`)
   }
 
   const chatFallbacks = [
