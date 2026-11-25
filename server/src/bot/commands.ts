@@ -215,6 +215,7 @@ function limitLine(s: AppState, now: Date): string {
 
 export function runCommand(state: AppState, input: string, now: Date = new Date()): BotResult {
   const text = input.trim().replace(/^[@/!]+\s*/, '').replace(/\s+/g, ' ')
+  const lower = text.toLowerCase()
   const today = toISO(now)
   const noChange = (reply: string): BotResult => ({ state, reply, changed: false })
   const done = (next: AppState, reply: string): BotResult => ({ state: next, reply, changed: true })
@@ -224,7 +225,25 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
   const cmd = cmdRaw.toLowerCase().replace(/[:,.]$/, '')
   const rest = restTokens.join(' ')
 
-  if (['help', 'hi', 'hello', 'hey', '?', 'menu', 'start', '/start', '/help'].includes(cmd)) return noChange(HELP)
+  if (['help', '?', 'menu', 'start', '/start', '/help'].includes(cmd)) return noChange(HELP)
+  if (['hi', 'hello', 'hey', 'heyy', 'hola'].includes(cmd)) {
+    return noChange('Ah, Bébé! You grace my presence! What financial triumphs or sordid confessions do you bring to my stage today? ✨\n\nSend "today" for the grand daily summary, or "help" if you find yourself momentarily discombobulated!')
+  }
+  if (['bye', 'goodbye', 'cya', 'adios'].includes(cmd)) {
+    return noChange('Farewell, darling! Perambulate gracefully, protect your purse strings, and do not squander your lucre on frivolous trifles! 🎭')
+  }
+  if (['gn', 'goodnight', 'night', 'sleep'].includes(cmd)) {
+    return noChange('Retire to your chambers, Bébé! Wrap your weary carriage in the finest satin and slumber like an exiled queen. The stage awaits tomorrow! 🌙✨')
+  }
+  if (['gm', 'morning', 'goodmorning', 'good morning'].includes(cmd)) {
+    return noChange('Good morning, my magnificent creation! The sun ascends! Imbibe your crystalline water, nourish your vessel, and seize the day with theatrical flair! 🌅')
+  }
+  if (['thanks', 'thank you', 'ty', 'thx'].includes(cmd)) {
+    return noChange('You are exquisitely welcome, darling child! One does what one must to keep this household from the clutches of financial insolvency! 🥂')
+  }
+  if (lower.includes('how are you') || ['sup', 'wassup', 'whats up'].includes(cmd)) {
+    return noChange('Languishing in artistic exile, but persevering with supreme elegance, Bébé! Ready to tally your expenditures and keep our coffers pristine! 🎭')
+  }
   if (['today', 'day', 'status', 'balance', 'bal', 'left', 'summary', '/today'].includes(cmd)) return noChange(summary(state, now))
   if (['week', 'weekly', '/week'].includes(cmd)) return noChange(weekSummary(state, now))
   if (['month', 'monthly', '/month'].includes(cmd)) return noChange(monthSummary(state, now))
