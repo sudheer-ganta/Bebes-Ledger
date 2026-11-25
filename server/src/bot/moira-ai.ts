@@ -90,6 +90,13 @@ const TOOLS = [
       cost: { type: 'INTEGER', description: 'Rupees if bought outside; 0 if home food' },
     }),
   },
+  {
+    name: 'undo_expense',
+    description: 'Erase or clear expenses when the user asks to undo, delete, remove, or clear expenses.',
+    parameters: obj({
+      clear_all_today: { type: 'BOOLEAN', description: 'True to clear all expenses from today, false to undo just the latest one.' },
+    }),
+  },
 ]
 
 
@@ -151,6 +158,20 @@ export function runTool(state: AppState, name: string, input: unknown, now: Date
       const key = `${fv.cycle.key}:${isRent ? 'rent' : 'fixed'}`
       if (state.paid[key]) return { state, result: `${isRent ? 'Rent' : 'Bills'} were already marked paid this cycle.` }
       return { state: A.setPaid(key, true)(state), result: `${isRent ? `Rent (${fmt(state.finance.rent)})` : `Bills (${fmt(state.finance.fixed)})`} marked paid from the money set aside at salary.` }
+    }
+    case 'undo_expense': {
+      const clearAll = !!i.clear_all_today
+      if (clearAll) {
+        const todays = state.expenses.filter((e) => e.date === today)
+        if (!todays.length) return { state, result: 'No expenses recorded today to clear. Slate is already ₹0.' }
+        let next = state
+        for (const e of todays) next = A.deleteExpense(e.id)(next)
+        return { state: next, result: `Cleared all ${todays.length} expenses from today. Today spend reset to ₹0. ${after(next)}` }
+      }
+      const last = state.expenses.filter((e) => e.source === 'manual' || e.source === 'meal').slice(-1)[0]
+      if (!last) return { state, result: 'No expense found to undo. Slate is already clean.' }
+      const next = A.deleteExpense(last.id)(state)
+      return { state: next, result: `Erased expense "${last.title}" for ₹${last.amount}. ${after(next)}` }
     }
     default:
       return { state, result: `Unknown tool ${name}.`, error: true }

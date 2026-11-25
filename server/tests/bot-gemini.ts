@@ -39,7 +39,7 @@ check(sent[0].url.endsWith('/models/gemini-3.8-flash:generateContent') && !sent[
 check(sent[0].headers['x-goog-api-key'] === 'test-key', 'key sent in x-goog-api-key header')
 check(sent[0].body.contents.map((c: any) => c.role).join(',') === 'user,model,user', 'history mapped to user/model roles', sent[0].body.contents)
 check(sent[0].body.contents.at(-1).parts[0].text.includes('<facts>'), 'facts in the latest user turn')
-check(sent[0].body.tools[0].functionDeclarations.length === 6, 'six tools declared')
+check(sent[0].body.tools[0].functionDeclarations.length === 7, 'seven tools declared')
 const second = sent[1].body.contents
 check(second.at(-2).role === 'model' && second.at(-2).parts[0].thoughtSignature === 'sig-1', 'model turn echoed back with its thought signature', second.at(-2))
 const fr = second.at(-1).parts[0].functionResponse

@@ -656,7 +656,29 @@ function handle(state: AppState, input: string, now: Date): BotResult {
     ].join('\n'))
   }
 
-  if (cmd === 'undo') {
+  if (
+    cmd === 'undo' ||
+    ['clear', 'reset'].includes(cmd) ||
+    lower.includes('clear expenses') ||
+    lower.includes('clear all') ||
+    lower.includes('remove them') ||
+    lower.includes('clear 0 amount') ||
+    lower.includes('reset today')
+  ) {
+    const clearAll =
+      ['clear', 'reset'].includes(cmd) ||
+      lower.includes('clear') ||
+      lower.includes('remove them') ||
+      lower.includes('all')
+    if (clearAll) {
+      const todays = state.expenses.filter((e) => e.date === today)
+      if (!todays.length) return noChange(`The ledger is already spotless, ${name}. Zero expenses recorded today!`)
+      let next = state
+      for (const e of todays) {
+        next = A.deleteExpense(e.id)(next)
+      }
+      return done(next, `✨ Expunged all ${todays.length} entries from today's ledger, ${name}! Spent amount reset to ₹0.\n${limitLine(next, now)}`)
+    }
     // only things you log by hand or by chat; grocery checkouts and crisis entries are undone in the app
     // newest by time; ties (same millisecond) go to the one added last
     const last = state.expenses
