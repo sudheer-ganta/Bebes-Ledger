@@ -4,7 +4,7 @@
 import type { AppState, DayKey, ExpenseCategory, ISODate } from '../../../client/src/types'
 import { addDays, diffDays, fmtDate, toISO, weekStartOf } from '../../../client/src/lib/date'
 import { dayStats, splitKeyFor } from '../../../client/src/lib/day'
-import { CRISIS_MEALS, DAY_FOCUS, GROCERY_WEEKS } from '../../../client/src/lib/defaults'
+import { CRISIS_MEALS, DAY_FOCUS, DEFAULT_GYM_PLAN, GROCERY_WEEKS } from '../../../client/src/lib/defaults'
 import { computeFinance } from '../../../client/src/lib/finance'
 import { currentWeekIndex, outOfStockItems, weekKeyOf, weekTotals } from '../../../client/src/lib/groceries'
 import { deriveAutoTasks } from '../../../client/src/lib/smart'
@@ -236,7 +236,7 @@ export function answer(intent: string, text: string, c: BrainCtx): string | null
       const tomorrow = /\btomorrow\b/i.test(text)
       const date = tomorrow ? addDays(today, 1) : today
       const key: DayKey = splitKeyFor(s, date)
-      const plan = s.gymPlan[key] ?? []
+      const plan = s.gymPlan?.[key] ?? DEFAULT_GYM_PLAN[key] ?? []
       const focus = DAY_FOCUS[key]
       if (!plan.length) return `🏛️ ${tomorrow ? 'Tomorrow' : 'Today'}: ${focus}. Rest, stretch, and do not speak to me of squats.`
       return `🏛️ ${tomorrow ? 'Tomorrow' : 'Today'}: ${focus}\n${plan.slice(0, 6).map((e) => `• ${e.name} ${e.sets}×${e.reps}`).join('\n')}\n${pick('b_gym', ['Renaissance statue, not Baltic dockworker.', 'Lift with drama, darling.', 'Do not slouch between sets.'])}`

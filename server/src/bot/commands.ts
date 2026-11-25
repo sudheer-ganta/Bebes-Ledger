@@ -8,7 +8,7 @@ import { computeFinance, getCycle } from '../../../client/src/lib/finance'
 import { deriveAutoTasks } from '../../../client/src/lib/smart'
 import { fmt, litres, num } from '../../../client/src/lib/util'
 import { answer, classify, CONFIDENT, INTENTS, train } from './brain'
-import { CRISIS_MEALS, DAY_FOCUS, DAY_KEYS, GROCERY_WEEKS } from '../../../client/src/lib/defaults'
+import { CRISIS_MEALS, DAY_FOCUS, DAY_KEYS, DEFAULT_GYM_PLAN, GROCERY_WEEKS } from '../../../client/src/lib/defaults'
 
 export interface BotResult {
   state: AppState
@@ -411,9 +411,11 @@ function monthSummary(s: AppState, now: Date): string {
   return lines.join('\n')
 }
 
-function gymSplit(s: AppState, now: Date): string {
+function gymSplit(s: AppState, now: Date, isTomorrow = false): string {
   const name = userName(s)
-  const dayIndex = now.getDay()
+  const d = isTomorrow ? addDays(toISO(now), 1) : toISO(now)
+  const targetDate = new Date(d)
+  const dayIndex = targetDate.getDay()
   const keyMap: DayKey[] = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']
   const key = keyMap[dayIndex]
   const focus = DAY_FOCUS[key]
@@ -426,9 +428,21 @@ function gymSplit(s: AppState, now: Date): string {
   ]
 
   if (key === 'sun') {
-    return `Rest today, ${name}. Languish in bed and don't bother me.`
+    return `🏛️ ${isTomorrow ? 'Tomorrow' : 'Today'}: Active Recovery + Weekly Review — ${name}\nRest today, ${name}. Languish in bed and don't bother me.`
   }
-  return `🏛️ ${focus} — ${name}\n${pick(gymQuotes)}\nDid you walk your 60 minutes, or are you lounging like a frippet?`
+
+  const plan = s.gymPlan?.[key] ?? DEFAULT_GYM_PLAN[key] ?? []
+  const exercises = plan.map((ex, i) => `${i + 1}. ${ex.name} — ${ex.sets} sets × ${ex.reps}`).join('\n')
+
+  return [
+    `🏛️ ${isTomorrow ? 'Tomorrow' : 'Today'}'s Routine: ${focus} — ${name}`,
+    pickNoRepeat('gym', gymQuotes),
+    ``,
+    `Exercises:`,
+    exercises || '• Rest and stretch',
+    ``,
+    `Did you walk your 60 minutes, or are you lounging like a frippet? 🚶`,
+  ].join('\n')
 }
 
 function dailyMealChecklist(s: AppState, now: Date): string {
@@ -617,7 +631,10 @@ function handle(state: AppState, input: string, now: Date): BotResult {
   if (['today', 'day', 'status', 'balance', 'bal', 'left', 'summary', '/today'].includes(cmd)) return noChange(summary(state, now))
   if (['week', 'weekly', '/week'].includes(cmd)) return noChange(weekSummary(state, now))
   if (['month', 'monthly', '/month'].includes(cmd)) return noChange(monthSummary(state, now))
-  if (['gym', 'workout', 'exercise', 'split'].includes(cmd)) return noChange(gymSplit(state, now))
+  if (['gym', 'workout', 'exercise', 'split'].includes(cmd) || lower.includes('gym list') || lower.includes('workout list') || lower.includes('gym plan')) {
+    const isTomorrow = lower.includes('tomorrow') || restTokens.includes('tomorrow')
+    return noChange(gymSplit(state, now, isTomorrow))
+  }
   if (['meals', 'meal', 'food', 'eating', 'diet', 'menu'].includes(cmd) && !restTokens.length) {
     return noChange(dailyMealChecklist(state, now))
   }
