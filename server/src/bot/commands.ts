@@ -95,6 +95,7 @@ function moiraScoldOverspend(name: string, over: number): string {
     `😱 Alack! Over by ${fmt(over)}! Could we not? Could we just… not?! Be careful, ${name}, lest you suffer vertigo from the dizzying heights of your moral ground! Tomorrow requires severe theatrical thrift!`,
     `😱 What mercurial madness possessed you to surrender ${fmt(over)} over budget, ${name}?! You recalcitrant little frippet! We are not the Astors! Tomorrow's allowance is slashed!`,
     `😱 I am suddenly overwhelmed by a wave of apathy, ${name}. You spent ${fmt(over)} over budget. Very well. I will simply swallow my pride and choke on it!`,
+    `😱 Gasp! Over by ${fmt(over)}! "Pish-posh on your little spreadsheet, ${name}!" A blowout was practically a medical necessity! If we don't treat ourselves, we may as well be struck down by a runaway Mack truck or descending space debris! But tomorrow, Sudheer, we tighten our corsets and never speak of this ledger again!`,
   ]
   return pick(quotes)
 }
@@ -104,6 +105,8 @@ function moiraPraiseThrift(name: string, left: number, limit: number, weekendPot
     `💰 Can lavish: ${fmt(left)} of ${fmt(limit)} today.\n🥂 "You are blind to reality, ${name}, and for that I am most proud." A parsimonious triumph, Bébé! Unspent lucre rolls into your Weekend Movie Fund (${fmt(weekendPot)})! Johnny would weep with pride!`,
     `💰 Remaining today: ${fmt(left)} of ${fmt(limit)}.\n🥂 "I don’t skate through life, ${name}. I walk through life in really nice shoes." Guard that Weekend Stash (${fmt(weekendPot)}) for that grand ₹1,500 cinema sojourn!`,
     `💰 Unspent today: ${fmt(left)} of ${fmt(limit)}.\n🥂 Look at you, ${name}! Our investments shall fructify! Unspent lucre safely transferred to your weekend soiree pool (${fmt(weekendPot)})!`,
+    `💰 Can lavish: ${fmt(left)} of ${fmt(limit)} today.\n🥂 Look at you, ${name}, my little financial ascetic! Surviving on photosynthesis and sheer moral superiority! Unspent lucre rolls straight into your Weekend Movie Fund (${fmt(weekendPot)})!`,
+    `💰 Remaining today: ${fmt(left)} of ${fmt(limit)}.\n🥂 A zero-rupee day? How delightfully, charmingly monastic, ${name}! Johnny, fetch the champagne—oh wait, we can't afford champagne, fetch the tap water! Protected for the Weekend Stash (${fmt(weekendPot)})!`,
   ]
   return pick(quotes)
 }
@@ -224,9 +227,16 @@ function gymSplit(s: AppState, now: Date): string {
   const key = keyMap[dayIndex]
   const focus = DAY_FOCUS[key]
 
+  const gymQuotes = [
+    `"Ah, you are off to punish the corpus at that subterranean dungeon of perspiration, ${name}? Pray tell, why must you subject your delicate frame to such barbaric exertion—and on foot, no less, like a Victorian urchin trekking through the fog! Go then, my brave little gladiator, lift your heavy iron baubles and perambulate back before your extremities succumb to rigor mortis!"`,
+    `"Be gentle with those dumbbells, darling ${name}. We want sculpted elegance, not the terrifying silhouette of a Baltic dockworker! Pop in your little acoustic pods and block out the grunting balatrons around you!"`,
+    `"Sculpt those deltoids with grace, darling ${name}—we are aiming for Renaissance statue, not a desperate man trying to hoist a refrigerator onto a moving truck! Pull those shoulders back, dear. Slouching is for defeated monarchs and tax auditors—neither of which you are!"`,
+    `"Tread lightly, bébé ${name}! Nothing ruins a grand entrance quite like hobbling into a room like a newborn foal on a marble floor! The crows don't just have eyes... they have wings!"`,
+  ]
+
   const lines = [
     `🏛️ Sculpting the Divine Silhouette — ${focus} 🏛️`,
-    `"The crows don't just have eyes, ${name}. They have wings! Fold in the iron, Bébé! Strut with the majesty of a gazelle across the Serengeti! A Rose never slouches!"`,
+    pick(gymQuotes),
     '',
   ]
 
@@ -423,9 +433,13 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
     const already = !!(state.dayLogs[today]?.habits ?? {}).walk
     const next = already ? state : A.toggleHabit(today, 'walk')(state)
     const st = dayStats(next, today)
+    const walkQuotes = [
+      `🚶 The 60-min gym pilgrimage is complete! (+5,500 steps). Total: ${num(st.steps)} of ${num(st.stepTarget)}\n"A thirty-minute constitutional just to reach the torture chamber? That is not fitness, bébé, that is a pilgrimage of penance!" But you, ${name}, walk through life in really nice shoes! A Rose never slouches!`,
+      `🚶 Majestic perambulations recorded! (+5,500 steps). Total: ${num(st.steps)} of ${num(st.stepTarget)}\n"One full hour of pedestrian toil, ${name}? At this rate, you should at least be foraging for truffles along the footpath so the journey isn't a total loss!" Do shield your complexion on the return trek, lest you arrive home looking like a freshly boiled langoustine!`,
+    ]
     return already
-      ? noChange(`Your majestic 60-min gym walk has already been immortalized today, ${name}!`)
-      : done(next, `🚶 The 60-min gym pilgrimage is complete! (+5,500 steps). Total: ${num(st.steps)} of ${num(st.stepTarget)}\n"Alexis, look at you, you're like a little refugee!" But you, ${name}, walk through life in really nice shoes! A Rose never slouches!`)
+      ? noChange(`Your majestic 60-min gym walk has already been immortalized today, ${name}! "Now collapse into a state of dignified, well-earned deshabille!"`)
+      : done(next, pick(walkQuotes))
   }
 
   // ---- meals
