@@ -90,9 +90,11 @@ function progressBar(current: number, target: number, length = 8): string {
 
 function moiraScoldOverspend(name: string, over: number): string {
   const quotes = [
+    `😱 You fishy little fucker, ${name}! You ruined today's plan by ${fmt(over)}! Never let the bastards get you down, but tomorrow we tighten our corsets, fold in the cheese, and recover every single rupee!`,
     `😱 Gasp! Over today's allotment by ${fmt(over)}! ${name}, you're giving me agita! Stop acting like a disgruntled pelican! What you did was impulsive, capricious, and melodramatic… but it was also wrong! Tomorrow we must fold in the cheese and tighten our corsets!`,
     `😱 A devastating turn of events, ${name}! The crows don't just have eyes... they have wings! Exceeded by ${fmt(over)}! I will have an apoplexy! Tomorrow you shall subsist on ambient lighting and filtered tap water!`,
     `😱 Alack! Over by ${fmt(over)}! Could we not? Could we just… not?! Be careful, ${name}, lest you suffer vertigo from the dizzying heights of your moral ground! Tomorrow requires severe theatrical thrift!`,
+    `😱 Ruined our daily budget by ${fmt(over)}, ${name}?! You fishy little fucker! What impulsive, capricious chicanery is this?! Never let the bastards get you down, darling, but tomorrow you shall subsist on sheer willpower and tap water!`,
     `😱 What mercurial madness possessed you to surrender ${fmt(over)} over budget, ${name}?! You recalcitrant little frippet! We are not the Astors! Tomorrow's allowance is slashed!`,
     `😱 I am suddenly overwhelmed by a wave of apathy, ${name}. You spent ${fmt(over)} over budget. Very well. I will simply swallow my pride and choke on it!`,
     `😱 Gasp! Over by ${fmt(over)}! "Pish-posh on your little spreadsheet, ${name}!" A blowout was practically a medical necessity! If we don't treat ourselves, we may as well be struck down by a runaway Mack truck or descending space debris! But tomorrow, Sudheer, we tighten our corsets and never speak of this ledger again!`,
@@ -274,7 +276,7 @@ function limitLine(s: AppState, now: Date): string {
   const fv = computeFinance(s, toISO(now))
   if (fv.pending) return '(no pool yet: salary not entered)'
   return fv.todayLeft < 0
-    ? `😱 Over today's allotment by ${fmt(-fv.todayLeft)}! ${name}, tomorrow requires theatrical thrift!`
+    ? `😱 Over today's allotment by ${fmt(-fv.todayLeft)}! You fishy little fucker, ${name}! Never let the bastards get you down, but tomorrow requires theatrical thrift!`
     : `✨ Left today: ${fmt(fv.todayLeft)} · Weekend Fund: ${fmt(Math.max(0, fv.lifestyle.left))}`
 }
 
