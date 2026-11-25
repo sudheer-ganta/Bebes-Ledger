@@ -74,7 +74,7 @@ export const guessCategory = (text: string): ExpenseCategory => {
   return 'Personal'
 }
 
-function slotFor(hour: number): MealSlot {
+export function slotFor(hour: number): MealSlot {
   if (hour < 7) return 'Pre-Workout'
   if (hour < 11) return 'Breakfast'
   if (hour < 16) return 'Lunch'
@@ -719,6 +719,21 @@ function handle(state: AppState, input: string, now: Date): BotResult {
 
   // ---- money questions: "what did I spend today", "can I afford a movie for 400", "how am I doing"
   const isQuestion = QUESTION.test(lower)
+  // "wht is that 40 ?", "what was 40 for", "40 for what" → which expense was that amount
+  {
+    const words = lower.replace(/\?/g, ' ').split(/\s+/).filter(Boolean)
+    const amt = words.map((w) => parseAmount(w)).find((n) => n !== null)
+    const filler = new Set(['what', 'wht', 'wat', 'whats', "what's", 'is', 'was', 'were', 'that', 'this', 'the', 'for', 'on', 'spent', 'rs', 'rs.', 'rupees', '₹', 'which', 'one', 'expense'])
+    const onlyFiller = words.every((w) => filler.has(w) || parseAmount(w) !== null)
+    if (amt && onlyFiller && words.some((w) => ['what', 'wht', 'wat', 'whats', "what's", 'which'].includes(w))) {
+      const match = [...state.expenses].reverse().find((e) => e.amount === amt && e.date >= addDays(today, -7))
+      if (!match) return noChange(`I see no ${fmt(amt)} in the last week, ${name}. A phantom expense? How very gothic.`)
+      const when = match.date === today
+        ? `today at ${new Date(match.createdAt).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true })}`
+        : fmtDate(match.date, { weekday: 'short', day: 'numeric', month: 'short' })
+      return noChange(`🧾 ${fmt(match.amount)} was "${match.title}" (${match.category}), ${when}.\nSend "undo" if it was a mistake.`)
+    }
+  }
   const spentQ = /\b(what|how much)\b.*\b(did i|have i|i)\s+(spend|spent)\b|\b(my )?(spending|expenses)\b|^spent (today|yesterday)\??$/i
   if (spentQ.test(lower) && !/\b(week|month)\b/.test(lower)) {
     const yday = /\byesterday\b/.test(lower)

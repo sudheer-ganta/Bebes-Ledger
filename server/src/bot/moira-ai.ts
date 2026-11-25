@@ -7,7 +7,7 @@ import { addDays, toISO } from '../../../client/src/lib/date'
 import { dayStats } from '../../../client/src/lib/day'
 import { computeFinance } from '../../../client/src/lib/finance'
 import { fmt, litres, num } from '../../../client/src/lib/util'
-import { brokeStatus, factsFor, guessCategory, moneyToday } from './commands'
+import { brokeStatus, factsFor, guessCategory, moneyToday, slotFor } from './commands'
 
 export interface ChatTurn {
   role: 'user' | 'assistant'
@@ -38,7 +38,8 @@ Facts and numbers:
 - Budgeting advice from these facts only. No investment, loan or tax advice.
 
 Tools (they change the user's real data):
-- Use a tool only when the user clearly reports something that already happened, with an amount: money spent, water drunk, steps walked, a chore to remember, rent or bills paid.
+- Use a tool only when the user clearly reports something that already happened, with an amount: money spent, water drunk, steps walked, food eaten (log_meal, with your protein estimate), a chore to remember, rent or bills paid.
+- When the user lists several things in one message (food, water, steps), call every matching tool, each once.
 - Never log questions, plans or hypotheticals ("can I", "should I", "thinking of", "tomorrow I will buy").
 - If the amount is missing or unclear, ask instead of guessing. Log each thing once.
 - Rent and bills come out of money set aside at salary: use mark_paid, never log_expense, for those.
@@ -79,6 +80,15 @@ const TOOLS = [
     name: 'mark_paid',
     description: "Mark this month's PG rent or fixed bills (recharge, gym, bills) as paid.",
     parameters: obj({ what: str(undefined, ['rent', 'bills']) }),
+  },
+  {
+    name: 'log_meal',
+    description: 'Record food the user already ate, as one meal. Estimate total protein in grams from typical Indian portions (1 egg ≈ 6 g, 50 g oats ≈ 6.5 g, half glass milk ≈ 4 g, 10 almonds ≈ 2.5 g). cost is rupees only if bought outside, else 0.',
+    parameters: obj({
+      title: str('Short summary, e.g. "egg, oats, milk, nuts & seeds"'),
+      protein_g: { type: 'INTEGER', description: 'Estimated total protein in grams' },
+      cost: { type: 'INTEGER', description: 'Rupees if bought outside; 0 if home food' },
+    }),
   },
 ]
 
@@ -121,6 +131,18 @@ export function runTool(state: AppState, name: string, input: unknown, now: Date
       const due = i.due === 'tomorrow' ? addDays(today, 1) : today
       const next = A.addTask({ title, category: 'today', priority: i.urgent ? 'high' : 'routine', due })(state)
       return { state: next, result: `Task added: "${title}", due ${i.due === 'tomorrow' ? 'tomorrow' : 'today'}.` }
+    }
+    case 'log_meal': {
+      const title = String(i.title ?? '').trim().slice(0, 80)
+      const protein = Math.round(Number(i.protein_g))
+      const cost = Math.round(Number(i.cost ?? 0))
+      if (!title) return { state, result: 'No food described; ask the user.', error: true }
+      if (!Number.isFinite(protein) || protein < 0 || protein > 200) return { state, result: 'Implausible protein; estimate again.', error: true }
+      if (!Number.isFinite(cost) || cost < 0 || cost > 5000) return { state, result: 'Implausible cost; ask the user.', error: true }
+      const slot = slotFor(now.getHours())
+      const next = A.addMeal({ date: today, slot, title, appliances: [], cost, protein })(state)
+      const st = dayStats(next, today)
+      return { state: next, result: `Logged ${slot}: ${title}, ${protein} g protein${cost ? `, ${fmt(cost)} spent` : ''}. Protein today: ${st.proteinG} of ${next.targets.proteinG} g.${cost ? ` ${after(next)}` : ''}` }
     }
     case 'mark_paid': {
       const fv = computeFinance(state, today)

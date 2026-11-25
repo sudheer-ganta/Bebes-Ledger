@@ -53,7 +53,7 @@ const SYNONYMS: Record<string, string> = {
   hydrated: 'water', drink: 'water', drank: 'water',
   movie: 'weekend', movies: 'weekend', outing: 'weekend', date: 'weekend', party: 'weekend',
 }
-const STOP = new Set(['i', 'me', 'my', 'the', 'a', 'an', 'is', 'am', 'are', 'do', 'did', 'does', 'to', 'of', 'for', 'on', 'in', 'so', 'far', 'have', 'has', 'what', 'how', 'much', 'many', 'can', 'please', 'mom', 'moira', 'darling', 'bro', 'tell', 'show', 'give', 'just', 'it', 'be', 'will', 'was', 'any', 'some', 'should', 'could', 'would', 'shall', 'get', 'go', 'with', 'about', 'this', 'that'])
+const STOP = new Set(['i', 'me', 'my', 'the', 'a', 'an', 'is', 'am', 'are', 'do', 'did', 'does', 'to', 'of', 'for', 'on', 'in', 'so', 'far', 'have', 'has', 'what', 'how', 'much', 'many', 'can', 'please', 'mom', 'moira', 'darling', 'bro', 'tell', 'show', 'give', 'just', 'it', 'be', 'will', 'was', 'any', 'some', 'should', 'could', 'would', 'shall', 'get', 'go', 'with', 'about', 'this', 'that', 'hai', 'hain', 'hi', 'hey', 'hello', 'kya', 'ka', 'ki', 'ke', 'na', 'yaar', 'bhai', 'ok', 'okay'])
 
 const norm = (w: string) => {
   let t = w.toLowerCase().replace(/[^a-z0-9]/g, '')

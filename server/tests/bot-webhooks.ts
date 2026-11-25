@@ -16,6 +16,9 @@ let saves = 0
 const deps: BotDeps = {
   load: async () => stored as unknown as Record<string, unknown> | null,
   save: async (s) => { stored = s; saves++ },
+  // typing must happen before the reply goes out
+  typingWhatsApp: async (id) => { sent.push(`WA typing (read ${id})`) },
+  typingTelegram: async (id) => { sent.push(`TG typing ${id}`) },
   sendWhatsApp: async (to, text) => { sent.push(`WA→${to}: ${text.split('\n')[0]}`) },
   sendTelegram: async (id, text) => { sent.push(`TG→${id}: ${text.split('\n')[0]}`) },
 }
@@ -71,4 +74,8 @@ await post('/whatsapp', b, { 'x-hub-signature-256': sign(b) }); await wait(300)
 for (const [k, v] of results) console.log(String(v).padEnd(14), '←', k)
 console.log('\nreplies sent:'); sent.forEach((s) => console.log('  ', s))
 console.log('\nsaves:', saves, '(expected 2: one expense + one water)')
+const typed = sent.findIndex((x) => x.startsWith('WA typing'))
+const typedFirst = typed > -1 && typed < sent.findIndex((x) => x.startsWith('WA→'))
+console.log(typedFirst ? 'ok   typing indicator sent before the first WhatsApp reply' : 'FAIL typing indicator not sent before the reply')
 server.close()
+if (!typedFirst) process.exit(1)

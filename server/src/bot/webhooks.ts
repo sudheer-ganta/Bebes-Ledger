@@ -25,6 +25,24 @@ export interface BotDeps {
   askMoira?: MoiraAi
   /** most Gemini replies per day (protects the API bill); default 30 */
   aiDailyLimit?: number
+  /** show "typing…" (WhatsApp also marks the message read: blue ticks); optional, failures ignored */
+  typingWhatsApp?: (messageId: string) => Promise<void>
+  typingTelegram?: (chatId: string) => Promise<void>
+  /** wait a little before replying so the typing dots are visible, like a person; off in tests */
+  humanPause?: boolean
+}
+
+/** Roughly how long a person takes to type the reply: 1–3.5 s, minus the time already spent thinking. */
+const pauseFor = (reply: string, spentMs: number) => Math.max(0, Math.min(3500, 900 + reply.length * 12) - spentMs)
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+/** Typing dots → work out the reply → short human pause → send. */
+async function replyLikeAPerson(text: string, deps: BotDeps, typing: () => Promise<void> | undefined, send: (reply: string) => Promise<void>) {
+  const started = Date.now()
+  await typing()?.catch(() => undefined) // cosmetic: never block the reply on it
+  const reply = await handleText(text, deps)
+  if (deps.humanPause) await sleep(pauseFor(reply, Date.now() - started))
+  await send(reply)
 }
 
 const HISTORY_TURNS = 12 // 6 back-and-forths
@@ -151,10 +169,11 @@ export function botRouter(cfg: BotConfig, deps: BotDeps): Router {
       for (const m of messages) {
         if (!remember(m.id)) continue
         if (!wa.allowed.includes(digits(m.from))) continue // silently ignore everyone except you
-        void (async () => {
-          const reply = m.type === 'text' && m.text?.body ? await handleText(m.text.body, deps) : 'I only understand text messages for now. Send "help" to see what I can do.'
-          await deps.sendWhatsApp(m.from, reply)
-        })().catch((e) => console.error('whatsapp bot error', e))
+        const send = (reply: string) => deps.sendWhatsApp(m.from, reply)
+        const work = m.type === 'text' && m.text?.body
+          ? replyLikeAPerson(m.text.body, deps, () => deps.typingWhatsApp?.(m.id), send)
+          : send('I only understand text messages for now. Send "help" to see what I can do.')
+        work.catch((e) => console.error('whatsapp bot error', e))
       }
     })
   }
@@ -171,10 +190,11 @@ export function botRouter(cfg: BotConfig, deps: BotDeps): Router {
       const chatId = String(msg.chat.id)
       if (!remember(`tg:${req.body.update_id}`)) return
       if (!tg.allowed.includes(chatId)) return
-      void (async () => {
-        const reply = msg.text ? await handleText(msg.text, deps) : 'I only understand text messages for now.'
-        await deps.sendTelegram(chatId, reply)
-      })().catch((e) => console.error('telegram bot error', e))
+      const send = (reply: string) => deps.sendTelegram(chatId, reply)
+      const work = msg.text
+        ? replyLikeAPerson(msg.text, deps, () => deps.typingTelegram?.(chatId), send)
+        : send('I only understand text messages for now.')
+      work.catch((e) => console.error('telegram bot error', e))
     })
   }
 
@@ -183,8 +203,28 @@ export function botRouter(cfg: BotConfig, deps: BotDeps): Router {
 
 // ---------- real network senders ----------
 
-export function makeSenders(cfg: BotConfig): Pick<BotDeps, 'sendWhatsApp' | 'sendTelegram'> {
+export function makeSenders(cfg: BotConfig): Pick<BotDeps, 'sendWhatsApp' | 'sendTelegram' | 'typingWhatsApp' | 'typingTelegram'> {
   return {
+    // Meta: marks your message read (blue ticks) and shows "typing…" until the reply or 25 s
+    async typingWhatsApp(messageId) {
+      const wa = cfg.whatsapp
+      if (!wa) return
+      const res = await fetch(`https://graph.facebook.com/${wa.apiVersion}/${wa.phoneId}/messages`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${wa.token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messaging_product: 'whatsapp', status: 'read', message_id: messageId, typing_indicator: { type: 'text' } }),
+      })
+      if (!res.ok) console.error('WhatsApp typing indicator failed', res.status, (await res.text()).slice(0, 200))
+    },
+    async typingTelegram(chatId) {
+      const tg = cfg.telegram
+      if (!tg) return
+      await fetch(`https://api.telegram.org/bot${tg.token}/sendChatAction`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: chatId, action: 'typing' }),
+      })
+    },
     async sendWhatsApp(to, text) {
       const wa = cfg.whatsapp
       if (!wa) return

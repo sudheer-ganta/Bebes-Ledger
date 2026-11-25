@@ -43,6 +43,7 @@ if (bots.whatsapp || bots.telegram) {
     },
     ...(ai ? { askMoira: makeMoiraAi(ai), aiDailyLimit: ai.dailyLimit } : {}),
     ...makeSenders(bots),
+    humanPause: true, // short "typing…" pause before each reply
   }))
   console.log(`Bots enabled: ${[bots.whatsapp && 'WhatsApp', bots.telegram && 'Telegram'].filter(Boolean).join(', ')}`)
   console.log(ai ? `Moira AI on (${ai.model}, up to ${ai.dailyLimit} replies/day)` : 'Moira AI off (set GEMINI_API_KEY to turn it on)')

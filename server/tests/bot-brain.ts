@@ -19,7 +19,7 @@ const expect: Array<[string, string | null]> = [
   ['how much debt do i still owe', 'debt'], ['how much did i blow yesterday', 'spent'], ['what ran out in the kitchen', 'restock'],
   ['did i drink enough', 'water'], ['tell me a joke', 'joke'], ['how was my mood', 'mood'], ['what should i cook tonight', 'meal_idea'],
   ['what did i eat today', 'meals_today'], ['how much have i saved so far', 'savings'], ['can i go for a movie this weekend', 'weekend'],
-  ['kitna kharcha hua', 'spent'],
+  ['kitna kharcha hua', 'spent'], ['hey hai', null], ['hi bhai', null],
   // not ours: must stay below the bar so the fallback (or Gemini) handles them
   ['honestly my landlord is driving me crazy these days', null], ['i went to a party yesterday and it was so loud', null],
   ['should i quit my job', null], ['fold in the cheese', null],
