@@ -90,10 +90,11 @@ function progressBar(current: number, target: number, length = 8): string {
 
 function moiraScoldOverspend(name: string, over: number): string {
   const quotes = [
-    `😱 Gasp! Over today's allotment by ${fmt(over)}! ${name}, stop acting like a disgruntled pelican! What you did was impulsive, capricious, and melodramatic… but it was also wrong! Tomorrow we must fold in the cheese and tighten our corsets!`,
-    `😱 A devastating turn of events, ${name}! The crows don't just have eyes... they have wings! Exceeded by ${fmt(over)}! Tomorrow you shall subsist on ambient lighting and filtered tap water!`,
-    `😱 Alack! Over by ${fmt(over)}! Be careful, ${name}, lest you suffer vertigo from the dizzying heights of your moral ground! Tomorrow requires severe theatrical thrift!`,
-    `😱 What mercurial madness possessed you to surrender ${fmt(over)} over budget, ${name}?! You little frippet! We are not the Astors! Tomorrow's allowance is slashed!`,
+    `😱 Gasp! Over today's allotment by ${fmt(over)}! ${name}, you're giving me agita! Stop acting like a disgruntled pelican! What you did was impulsive, capricious, and melodramatic… but it was also wrong! Tomorrow we must fold in the cheese and tighten our corsets!`,
+    `😱 A devastating turn of events, ${name}! The crows don't just have eyes... they have wings! Exceeded by ${fmt(over)}! I will have an apoplexy! Tomorrow you shall subsist on ambient lighting and filtered tap water!`,
+    `😱 Alack! Over by ${fmt(over)}! Could we not? Could we just… not?! Be careful, ${name}, lest you suffer vertigo from the dizzying heights of your moral ground! Tomorrow requires severe theatrical thrift!`,
+    `😱 What mercurial madness possessed you to surrender ${fmt(over)} over budget, ${name}?! You recalcitrant little frippet! We are not the Astors! Tomorrow's allowance is slashed!`,
+    `😱 I am suddenly overwhelmed by a wave of apathy, ${name}. You spent ${fmt(over)} over budget. Very well. I will simply swallow my pride and choke on it!`,
   ]
   return pick(quotes)
 }
@@ -101,8 +102,8 @@ function moiraScoldOverspend(name: string, over: number): string {
 function moiraPraiseThrift(name: string, left: number, limit: number, weekendPot: number): string {
   const quotes = [
     `💰 Can lavish: ${fmt(left)} of ${fmt(limit)} today.\n🥂 "You are blind to reality, ${name}, and for that I am most proud." A parsimonious triumph, Bébé! Unspent lucre rolls into your Weekend Movie Fund (${fmt(weekendPot)})! Johnny would weep with pride!`,
-    `💰 Remaining today: ${fmt(left)} of ${fmt(limit)}.\n🥂 Look at you, ${name}, my disciplined spawn! Guard that Weekend Stash (${fmt(weekendPot)}) for that grand ₹1,500 cinema sojourn!`,
-    `💰 Unspent today: ${fmt(left)} of ${fmt(limit)}.\n🥂 "If that's not a cause for celebration, I don't know what is!" Unspent lucre safely transferred to your weekend soiree pool (${fmt(weekendPot)})!`,
+    `💰 Remaining today: ${fmt(left)} of ${fmt(limit)}.\n🥂 "I don’t skate through life, ${name}. I walk through life in really nice shoes." Guard that Weekend Stash (${fmt(weekendPot)}) for that grand ₹1,500 cinema sojourn!`,
+    `💰 Unspent today: ${fmt(left)} of ${fmt(limit)}.\n🥂 Look at you, ${name}! Our investments shall fructify! Unspent lucre safely transferred to your weekend soiree pool (${fmt(weekendPot)})!`,
   ]
   return pick(quotes)
 }
@@ -110,22 +111,23 @@ function moiraPraiseThrift(name: string, left: number, limit: number, weekendPot
 function moiraExpenseReaction(name: string, amount: number): string {
   if (amount >= 1200) {
     return pick([
-      `👑 Gasp! A Gatsby-esque indulgence of biblical proportions, ${name}! My wig cabinet trembled at this transaction!`,
+      `👑 Gasp! A Gatsby-esque indulgence of biblical proportions, ${name}! My wig cabinet trembled at this transaction! What on earth requires ${fmt(amount)}?!`,
       `👑 Fifteen hundred rupees?! Are we financing a local production of Cabaret in our PG bedroom, ${name}?!`,
       `👑 "This wine is awful. Get me another glass." ${fmt(amount)} vanished into the ether, ${name}! An opulent, mercurial disbursement!`,
-      `👑 ${name}, what have I told you about putting your lucre on display like cheap trinkets at a flea market?! Never! Never without proper budgeting!`,
+      `👑 "${name}, what have I told you about putting your body on the internet? Never! Never without proper lighting!" And never without proper budgeting!`,
+      `👑 "I’m not going to sit here and take this from someone who looks like a thumb." ${fmt(amount)} spent! You're giving me agita, child!`,
     ])
   }
   if (amount >= 400) {
     return pick([
-      `🎭 A dramatic expenditure registered, ${name}! Fold in the cheese, darling, because tomorrow we pace ourselves!`,
+      `🎭 A dramatic expenditure registered, ${name}! "What does 'fold in the cheese' mean?! You fold it in!" Tomorrow we practice theatrical thrift!`,
       `🎭 "Oh, ${name}… it’s a rare gift to strip vanity of its charm, yet here you are." A bold swipe of the card, child!`,
-      `🎭 Duly registered in our dramatic annals. A little extravagant for our PG exile, but we shall endure!`,
+      `🎭 "Have I been let go? I won't shout." ${fmt(amount)} logged. A bombastic swipe, but our coterie shall endure!`,
     ])
   }
   return pick([
-    `✨ Duly registered, ${name}. A modest, acceptable disbursement.`,
-    `✨ A quaint little expenditure, darling. A mere drop in our artisanal bucket.`,
+    `✨ Duly registered, ${name}. A modest, acceptable disbursement. No chicanery detected.`,
+    `✨ A quaint little expenditure, darling. A mere drop in our artisanal bucket. Avoid pettifogging over pennies.`,
     `✨ Noted, my child. The books remain steady.`,
   ])
 }
@@ -244,7 +246,7 @@ function mealSuggestions(s: AppState, slot?: string): string {
 
   const lines = [
     `🍳 Gastronomical Inspiration for ${chosenSlot}, ${name}! 🍳`,
-    '"What does burning do?! Just fold in the cheese, darling! Turtles do not pets make, but eggs in the boiler make a feast! Even in a PG, we dine like royalty!"',
+    '"What does burning do?! Just fold in the cheese, darling! Turtles do not pets make—you may as well tie a leash around a raw chicken cutlet! But eggs in the boiler make a feast! Even in a PG, we dine like royalty!"',
     '',
   ]
 
@@ -285,25 +287,25 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
 
   // ---- Moira Conversational Easter Eggs & Greetings
   if (['hi', 'hello', 'hey', 'heyy', 'hola'].includes(cmd)) {
-    return noChange(`Ah, ${name}, my dear Bébé! You grace my presence! What financial triumphs or sordid confessions do you bring to my stage today? Might you and I confabulate for a moment? ✨\n\nSend "today" for the grand daily summary, or "help" if you find yourself dripping with ennui!`)
+    return noChange(`Ah, ${name}, my dear Bébé! You grace my presence! "I’m trying very hard not to connect with people right now," but for my favorite offspring, I shall make an exception! What financial triumphs or sordid confessions do you bring to my stage today? Might you and I confabulate for a moment? ✨\n\nSend "today" for the grand daily summary, or "help" if you find yourself dripping with ennui!`)
   }
   if (['bye', 'goodbye', 'cya', 'adios'].includes(cmd)) {
-    return noChange(`Farewell, ${name}! Perambulate gracefully, keep yourself appropriately habilimented, and do not squander your lucre on frivolous balatrons! 🎭`)
+    return noChange(`Farewell, ${name}! Perambulate gracefully, keep yourself appropriately habilimented, and do not squander your lucre on frivolous balatrons! "John, how was I to know you were in peril? You're over there, loudly vocalizing!" 🎭`)
   }
   if (['gn', 'goodnight', 'night', 'sleep'].includes(cmd)) {
-    return noChange(`Retire to your chambers, ${name}! Wrap your weary carriage in the finest satin and slumber like an exiled queen. The stage awaits tomorrow! 🌙✨`)
+    return noChange(`Retire to your chambers, ${name}! "Let’s all go to bed and pray we don’t wake up." Wrap your weary carriage in the finest satin and slumber like an exiled queen. The stage awaits tomorrow! 🌙✨`)
   }
   if (['gm', 'morning', 'goodmorning', 'good morning'].includes(cmd)) {
-    return noChange(`Good morning, ${name}, my magnificent creation! The sun ascends! Imbibe your potable crystalline libation, shake off the morning ennui, and seize the day with theatrical flair! 🌅`)
+    return noChange(`Good morning, ${name}, my magnificent creation! "I don’t skate through life, darling. I walk through life in really nice shoes." Imbibe your potable crystalline libation, shake off the morning ennui, and seize the day with theatrical flair! 🌅`)
   }
   if (['thanks', 'thank you', 'ty', 'thx'].includes(cmd)) {
     return noChange(`You are exquisitely welcome, ${name}, darling child! One does what one must to keep this household from the clutches of financial insolvency! 🥂`)
   }
   if (lower.includes('how are you') || ['sup', 'wassup', 'whats up'].includes(cmd)) {
-    return noChange(`I’m positively bedeviled with meetings, et cetera, ${name}! Languishing in artistic exile, but persevering with supreme elegance! Ready to tally your expenditures and keep our coffers pristine! 🎭`)
+    return noChange(`"I’m positively bedeviled with meetings, et cetera," ${name}! Languishing in artistic exile, but persevering with supreme elegance! Ready to tally your expenditures and keep our coffers pristine! 🎭`)
   }
   if (lower.includes('crow') || lower.includes('crows')) {
-    return noChange(`"The crows don't just have eyes, ${name}. They have... wings." 🦅 A cinematic masterpiece! Now drink some water, darling.`)
+    return noChange(`"The crows don't just have eyes, ${name}. They have... wings." 🦅 A cinematic triumph! Now drink some water, darling.`)
   }
   if (lower.includes('wine') || lower.includes('fruit wine') || lower.includes('herb')) {
     return noChange(`"The herb-a-flinge... fruit wine! This wine is awful. Get me another glass!" 🍷 Cheers, ${name}!`)
@@ -313,6 +315,27 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
   }
   if (lower.includes('gossip')) {
     return noChange(`"Gossip is the devil's telephone, ${name}. Best to just hang up." ...Though do tell me what happened! ☎️`)
+  }
+  if (lower.includes('turtle')) {
+    return noChange(`"Turtles do not pets make, ${name}. The poor things are riddled with a myriad of diseases. You may as well tie a leash around a raw chicken cutlet." 🐢`)
+  }
+  if (lower.includes('shoes') || lower.includes('skate')) {
+    return noChange(`"I don’t skate through life, ${name}. I walk through life in really nice shoes." 👠`)
+  }
+  if (lower.includes('cheese') || lower.includes('fold')) {
+    return noChange(`"What does 'fold in the cheese' mean, ${name}?! YOU FOLD IT IN! I cannot show you everything! Well, can you show me one thing?!" 🧀`)
+  }
+  if (lower.includes('condom')) {
+    return noChange(`"I'm sorry I'm not a condom, ${name}!" 🎭`)
+  }
+  if (lower.includes('apathy')) {
+    return noChange(`"I am suddenly overwhelmed by a wave of apathy, ${name}." 💅`)
+  }
+  if (lower.includes('towel')) {
+    return noChange(`"I have asked you thrice now for a towel so that I may wash this town off my body, ${name}!" 🧖‍♀️`)
+  }
+  if (lower.includes('thumb')) {
+    return noChange(`"I’m not going to sit here and take this from someone who looks like a thumb, ${name}!" 🎭`)
   }
 
   if (['today', 'day', 'status', 'balance', 'bal', 'left', 'summary', '/today'].includes(cmd)) return noChange(summary(state, now))
@@ -369,6 +392,7 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
       'Guzzle it down! We cannot afford luxury anti-aging creams right now, child!',
       'Potable hydration is your Crème de la Mer, darling!',
       'Never let the bastards see you dehydrated!',
+      `"It’s probably nothing, just a touch of the ague, or perhaps a stroke" if you don't hydrate, ${name}!`,
     ])
     return done(next, `💧 +250 mL ingested! ${quote} (${litres(st.waterMl)} / ${litres(st.waterTarget)})`)
   }
@@ -401,7 +425,7 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
     const st = dayStats(next, today)
     return already
       ? noChange(`Your majestic 60-min gym walk has already been immortalized today, ${name}!`)
-      : done(next, `🚶 The 60-min gym pilgrimage is complete! (+5,500 steps). Total: ${num(st.steps)} of ${num(st.stepTarget)}\nA Rose never slouches!`)
+      : done(next, `🚶 The 60-min gym pilgrimage is complete! (+5,500 steps). Total: ${num(st.steps)} of ${num(st.stepTarget)}\n"Alexis, look at you, you're like a little refugee!" But you, ${name}, walk through life in really nice shoes! A Rose never slouches!`)
   }
 
   // ---- meals
