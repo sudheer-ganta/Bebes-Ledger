@@ -162,10 +162,8 @@ function summary(s: AppState, now: Date): string {
     lines.push(`🥂 Total Discretionary Pool: ${fmt(fv.remaining)} · ${fv.cycle.daysLeft} days to payday`)
   }
 
-  const waterPct = Math.round((st.waterMl / st.waterTarget) * 100)
-  lines.push(`💧 Potable Hydration: ${litres(st.waterMl)} / ${litres(st.waterTarget)} [${progressBar(st.waterMl, st.waterTarget)}] ${waterPct}%`)
-  const stepPct = Math.round((st.steps / st.stepTarget) * 100)
-  lines.push(`🚶 Perambulations: ${num(st.steps)} / ${num(st.stepTarget)} [${progressBar(st.steps, st.stepTarget)}] ${stepPct}%`)
+  lines.push(`💧 Water: ${litres(st.waterMl)} / ${litres(st.waterTarget)}${st.waterMl >= st.waterTarget ? ' ✨ Splendidly hydrated!' : ''}`)
+  lines.push(`🚶 Paces: ${num(st.steps)} / ${num(st.stepTarget)}${st.steps >= st.stepTarget ? ' 🏆 The gazelle reaches Mount Olympus!' : ''}`)
   lines.push(`🥩 Protein: ${st.proteinG} / ${s.targets.proteinG} g`)
 
   if (open.length) {
@@ -244,7 +242,7 @@ function gymSplit(s: AppState, now: Date): string {
     lines.push('Rest, darling! Replenish your radiant vessel with languid slumber and leisurely strolls.')
   } else {
     lines.push(`Today\'s Muscle Masterpiece: ${focus}`)
-    lines.push('Ticking off your 60-min round-trip walk? Send: walk (+5,500 steps!)')
+    lines.push('Have you completed that 60-minute walk through the elements, or must I send a search party?')
   }
   return lines.join('\n')
 }
@@ -267,7 +265,7 @@ function mealSuggestions(s: AppState, slot?: string): string {
   })
 
   lines.push('')
-  lines.push(`When you have feasted, tell your mother: "ate 3 eggs p20" (or: "ate paneer bhurji p28 ₹60")`)
+  lines.push(`Eat well, ${name}, and let me know once you have nourished that divine vessel.`)
   return lines.join('\n')
 }
 
@@ -418,7 +416,7 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
     const reaction = moiraExpenseReaction(name, amount)
     return done(next, `${reaction}\nLogged ${fmt(amount)} for ${category}${title ? ` (${title})` : ''}.\n${limitLine(next, now)}`)
   }
-  if (isExpenseWord) return noChange(`How much lucre was surrendered, ${name}? Example: spent 120 auto`)
+  if (isExpenseWord) return noChange(`How much lucre was surrendered, ${name}? Tell me the damage, darling!`)
 
   if (cmd === 'undo') {
     const last = [...state.expenses].sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]
@@ -444,8 +442,7 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
     const raw = parseAmount(restTokens[0] ?? '')
     if (raw === null) {
       const st = dayStats(state, today)
-      const pct = Math.round((st.waterMl / st.waterTarget) * 100)
-      return noChange(`💧 Crystalline Potable Libation: ${litres(st.waterMl)} / ${litres(st.waterTarget)} [${progressBar(st.waterMl, st.waterTarget)}] ${pct}%\nGuzzle more, ${name}! No offspring of mine shall walk the earth looking like a desiccated apricot!\nSend: water 500 or glass`)
+      return noChange(`💧 Water: ${litres(st.waterMl)} / ${litres(st.waterTarget)}\nGuzzle more, ${name}! No offspring of mine shall walk the earth looking like a desiccated apricot!`)
     }
     const ml = raw <= 10 ? raw * 1000 : raw
     const next = A.addWater(today, ml, 'Water')(state)
@@ -457,7 +454,7 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
   if (['steps', 'step', 'walked'].includes(cmd)) {
     const isSet = restTokens[0]?.toLowerCase() === 'set' || restTokens[0]?.toLowerCase() === 'total'
     const n = parseAmount(restTokens[isSet ? 1 : 0] ?? '')
-    if (n === null) return noChange(`How many peregrinations, ${name}? Example: steps 3000 or steps set 6000`)
+    if (n === null) return noChange(`How many peregrinations did you march, ${name}? Confess your paces!`)
     const credit = dayStats(state, today).stepCredit
     const next = isSet ? A.setExtraSteps(today, Math.max(0, n - credit))(state) : A.addSteps(today, n)(state)
     const st = dayStats(next, today)
@@ -478,7 +475,7 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
 
   // ---- meals
   if (['ate', 'eat', 'had'].includes(cmd)) {
-    if (!rest) return noChange(`What culinary creation did you savor, ${name}? Example: ate 3 eggs p20`)
+    if (!rest) return noChange(`What did you feed yourself, ${name}? And please tell me there was actual protein involved!`)
     let protein = 0
     let cost = 0
     const words: string[] = []
@@ -508,16 +505,16 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
       else words.push(w)
     }
     const title = words.join(' ').trim()
-    if (!title) return noChange(`What sordid obligation must we record, ${name}? Example: task buy soap tomorrow`)
+    if (!title) return noChange(`What sordid obligation must we record, ${name}? Name the chore, darling!`)
     const category = taskCategory(title)
     const next = A.addTask({ title, category, priority, due: due ?? today })(state)
     return done(next, `📜 Enscribed in the registry for ${name}: "${title}" (due ${due && due !== today ? fmtDate(due) : 'today'}${priority === 'high' ? ', urgent!' : ''}) — "I’m positively bedeviled with meetings, et cetera, but we shall conquer this obligation!"`)
   }
   if (['done', 'finished', 'complete', 'completed', 'tick'].includes(cmd)) {
     const q = rest.toLowerCase()
-    if (!q) return noChange(`Which chore was vanquished, ${name}? Example: done soap`)
+    if (!q) return noChange(`Which chore was vanquished, ${name}? Tell your mother!`)
     const t = state.tasks.find((x) => !x.done && x.title.toLowerCase().includes(q))
-    if (!t) return noChange(`No open obligation matches "${rest}", ${name}. Send "tasks" to inspect them.`)
+    if (!t) return noChange(`No open obligation matches "${rest}", ${name}! Are you inventing phantom chores?`)
     return done(A.toggleTask(t.id)(state), `✨ Vanquished! "${t.title}" is struck from existence! Cinderella could never, ${name}!`)
   }
   if (['tasks', 'list', 'todos'].includes(cmd)) {
@@ -529,7 +526,7 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
   // ---- money events
   if (cmd === 'salary') {
     const n = parseAmount(restTokens[0] ?? '')
-    if (n === null) return noChange(`Confess the grand total, ${name}! Example: salary 25160`)
+    if (n === null) return noChange(`Confess the grand total, ${name}! What did they replenish our coffers with?`)
     const fv = computeFinance(state, today)
     const next = A.receiveSalary(fv.cycle.key, n, today)(state)
     const a = computeFinance(next, today).alloc
@@ -541,18 +538,19 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
   }
   if (cmd === 'debt') {
     const n = parseAmount(restTokens[0] ?? '')
-    if (n === null) return noChange(`How much of the debt was banished, ${name}? Example: debt 2000`)
+    if (n === null) return noChange(`How much of the debt did you pay down, ${name}? Confess the figure!`)
     const next = A.logDebtPayment(n, today)(state)
     if (next === state) return noChange(`The shackles are already gone, ${name}! We owe not a single pence to anyone! 🥂`)
     return done(next, `⚔️ ${fmt(n)} paid down! Still remaining in the shadows: ${fmt(computeFinance(next, today).debt.remaining)}`)
   }
 
   const chatFallbacks = [
-    `Pish posh, ${name}! "I am allergic to mediocrity," and "darling, I am incapable of doing anything with subtlety!" Might you and I confabulate like civilized souls? If you bear news of expenditures, confess them (e.g. "120 auto" or "ate 3 eggs"), or send "today" for our grand audit! 🎭`,
-    `"You can't put a price on style, my dear," ${name}! I do not merely walk through life, I perform it! What dramatic revelation or pecuniary tally do you bring before your mother today? (Send "today" for your ledger, or "help" for my repertoire!) ✨`,
-    `"One must champagne oneself, ${name}, and say: I am ready for this!" Though if this is about an unplanned disbursement, pray tell me before I suffer an apoplexy! Send "today", "gym", or "help" if you are feeling adrift in ennui. 🥂`,
-    `"When one of us shines, all of us shine," ${name}! But do keep your voice down, my ocular nerves are still recovering from the glare of poverty! Are we logging lucre, water, or perambulations? Send "today" to inspect our coffers. 💅`,
-    `"I would be pleased to RSVP as pending," ${name}! What whimsical balatron of a thought was that? Speak plainly, child—have you hydrated, or are we confronting an impending fiscal crisis? Send "today" or "help" whenever you wish! 🎭`,
+    `Pish posh, ${name}! "I am allergic to mediocrity," and "darling, I am incapable of doing anything with subtlety!" What on earth are you on about? Did you spend our money, or are you just here to distract your mother? 🎭`,
+    `"You can't put a price on style, my dear," ${name}! I do not merely walk through life, I perform it. Now speak up, did something scandalous happen today, or are you just admiring my poise? ✨`,
+    `"One must champagne oneself, ${name}, and say: I am ready for this!" Though if this is about an unplanned disbursement, confess it swiftly before I suffer an apoplexy! 🥂`,
+    `"When one of us shines, all of us shine," ${name}! But do keep your voice down, my ocular nerves are still recovering from the glare of poverty! Tell me you've hydrated and eaten something proper. 💅`,
+    `"I would be pleased to RSVP as pending," ${name}! What whimsical balatron of a thought was that? Drink some water and tell me what you need, child! 🎭`,
+    `"The crows don't just have eyes, ${name}. They have wings!" Stop behaving like a disgruntled pelican and tell your mother how our affairs stand today! 🦅`,
   ]
   return noChange(pick(chatFallbacks))
 }
