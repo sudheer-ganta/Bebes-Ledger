@@ -1,5 +1,5 @@
-// Chat command handler in the voice of Moira Rose (Schitt's Creek).
-// Shared by WhatsApp and Telegram bots. Reuses web app logic (client/src/lib).
+// Chat command handler in the voice of Moira Rose (Schitt's Creek)
+// Directed as a loving, dramatic aristocratic mother and strict financial comptroller.
 import type { AppState, ExpenseCategory, MealSlot, Priority, TaskCategory, DayKey } from '../../../client/src/types'
 import * as A from '../../../client/src/lib/actions'
 import { addDays, fmtDate, toISO } from '../../../client/src/lib/date'
@@ -15,24 +15,27 @@ export interface BotResult {
   changed: boolean
 }
 
+const pick = (arr: string[]): string => arr[Math.floor(Math.random() * arr.length)]
+
 export const HELP = [
   '🎭 Bébé\'s Ledger — Directed by Moira Rose 🎭',
+  '"One must maintain standards, even when cast down into pecuniary exile!"',
   '',
-  'Command your theatrical comptroller, darling:',
-  '• today / day — The grand daily state of affairs',
+  'Command your theatrical mother & financial comptroller, darling:',
+  '• today / day — The grand state of our daily affairs',
   '• week — The weekly budget & your Weekend Movie Fund!',
-  '• month — The monthly coffers (salary, rent, savings)',
-  '• gym — Today\'s anatomical sculpting session',
-  '• meals / breakfast / lunch / dinner — Gastronomical inspirations',
+  '• month — The royal coffers (salary, rent, savings)',
+  '• gym — Today\'s anatomical sculpting split (strut like a gazelle!)',
+  '• meals / breakfast / lunch / dinner — PG culinary inspirations',
   '• 120 auto  (or: spent 120 auto) — Confess an expenditure',
   '• water 500  (or: glass) — Imbibe crystalline libations',
-  '• walk  (or: steps 3000 / steps set 6000) — Perambulations',
+  '• walk  (or: steps 3000 / steps set 6000) — Grand perambulations',
   '• ate 3 eggs p20 — Record your protein intake',
   '• task buy soap tomorrow  (or: task pay rent !) — An obligation',
   '• done soap  ·  tasks — Vanquish your to-dos',
-  '• savings — Behold your burgeoning vault',
+  '• savings — Behold your burgeoning untouchable vault',
   '• salary 25160  ·  debt 2000 — Royal allocations',
-  '• undo — Erase a tragic mistake',
+  '• undo — Erase a tragic fiscal misstep',
 ].join('\n')
 
 const CATEGORY_WORDS: Array<[ExpenseCategory, RegExp]> = [
@@ -83,6 +86,45 @@ function progressBar(current: number, target: number, length = 8): string {
   return '█'.repeat(filled) + '░'.repeat(length - filled)
 }
 
+function moiraScoldOverspend(over: number): string {
+  const quotes = [
+    `😱 Gasp! Over today's allotment by ${fmt(over)}! David, stop acting like a disgruntled pelican! Tomorrow we must fold in the cheese and tighten our corsets!`,
+    `😱 A devastating turn of events! Exceeded by ${fmt(over)}! Tomorrow you shall subsist on ambient lighting and filtered tap water!`,
+    `😱 Alack! Over by ${fmt(over)}! Did you hire a brass band for your outing?! Tomorrow requires severe theatrical thrift!`,
+  ]
+  return pick(quotes)
+}
+
+function moiraPraiseThrift(left: number, limit: number, weekendPot: number): string {
+  const quotes = [
+    `💰 Can lavish: ${fmt(left)} of ${fmt(limit)} today.\n🥂 A parsimonious triumph, Bébé! Unspent lucre rolls into your Weekend Movie Fund (${fmt(weekendPot)})! Johnny would weep with pride!`,
+    `💰 Remaining today: ${fmt(left)} of ${fmt(limit)}.\n🥂 Look at you, my disciplined spawn! Guard that Weekend Stash (${fmt(weekendPot)}) for that grand ₹1,500 cinema sojourn!`,
+  ]
+  return pick(quotes)
+}
+
+function moiraExpenseReaction(amount: number): string {
+  if (amount >= 1200) {
+    return pick([
+      '👑 Gasp! A Gatsby-esque indulgence of biblical proportions, Bébé! My wig cabinet trembled at this transaction!',
+      '👑 Fifteen hundred rupees?! Are we financing a local production of Cabaret in our PG bedroom?!',
+      '👑 An opulent, brazen expenditure! One must maintain standards, but heavens above, darling!',
+    ])
+  }
+  if (amount >= 400) {
+    return pick([
+      '🎭 A dramatic expenditure registered! Fold in the cheese, darling, because tomorrow we pace ourselves!',
+      '🎭 An audacious swipe of the card, child! I felt that tremor all the way from Schitt\'s Creek!',
+      '🎭 Duly registered in our dramatic annals. A little extravagant, but we shall endure!',
+    ])
+  }
+  return pick([
+    '✨ Duly registered, darling. A modest, acceptable disbursement.',
+    '✨ A quaint little expenditure. A mere drop in our artisanal bucket.',
+    '✨ Noted, my child. The books remain steady.',
+  ])
+}
+
 function summary(s: AppState, now: Date): string {
   const today = toISO(now)
   const fv = computeFinance(s, today)
@@ -100,13 +142,13 @@ function summary(s: AppState, now: Date): string {
     )
   } else {
     const left = fv.todayLeft
-    if (left < 0) {
-      lines.push(`😱 Gasp! Over today's allotment by ${fmt(-left)}! Tomorrow we must fold in the cheese and tighten our corsets!`)
-    } else {
-      lines.push(`💰 Can lavish: ${fmt(left)} of ${fmt(fv.dailyLimit)} today`)
-    }
     const weekendPot = Math.max(0, fv.lifestyle.left)
-    lines.push(`🥂 Weekend & Fun Stash: ${fmt(weekendPot)} · Total Pool: ${fmt(fv.remaining)} · ${fv.cycle.daysLeft} days to payday`)
+    if (left < 0) {
+      lines.push(moiraScoldOverspend(-left))
+    } else {
+      lines.push(moiraPraiseThrift(left, fv.dailyLimit, weekendPot))
+    }
+    lines.push(`🥂 Total Discretionary Pool: ${fmt(fv.remaining)} · ${fv.cycle.daysLeft} days to payday`)
   }
 
   const waterPct = Math.round((st.waterMl / st.waterTarget) * 100)
@@ -118,7 +160,7 @@ function summary(s: AppState, now: Date): string {
   if (open.length) {
     lines.push(`🎭 Sordid Obligations (${open.length}): ${open.slice(0, 3).map((t) => t.title).join('; ')}${open.length > 3 ? '…' : ''}`)
   } else {
-    lines.push('✨ Not a single sordid obligation remains, darling! Glorious!')
+    lines.push('✨ Not a single sordid obligation remains, darling! Glorious! Pick up a glass and celebrate!')
   }
   return lines.join('\n')
 }
@@ -130,15 +172,16 @@ function weekSummary(s: AppState, now: Date): string {
 
   const lines = [
     '🥂 Moira\'s Weekly Financial Soirée 🥂',
+    '"Never let the bastards get you down, but do watch the weekend budget, darling!"',
     '',
     `• Safe Weekly Pace: ${fmt(fv.weekPace)}`,
     `• Left for this week: ${fmt(Math.max(0, fv.weekLeft))}`,
-    `• Weekend Outing / Movie Fund: ${fmt(Math.max(0, fv.lifestyle.left))} (protect this for that 1.5k cinema extravagance, Bébé!)`,
-    `• Groceries Budget Left: ${fmt(Math.max(0, fv.groceries.left))}`,
+    `• Weekend Outing / Movie Fund: ${fmt(Math.max(0, fv.lifestyle.left))} (for that ₹1.5k cinema extravagance, Bébé!)`,
+    `• Groceries & Sustenance Left: ${fmt(Math.max(0, fv.groceries.left))}`,
     `• Emergency Buffer: ${fmt(Math.max(0, fv.buffer.left))}`,
     '',
     fv.todayLeft >= 0
-      ? '✨ A magnificent display of restraint! Your weekend self will weep with gratitude.'
+      ? '✨ A magnificent display of maternal restraint! Your weekend self will weep with gratitude!'
       : '⚠️ Alack! A slight indulgence this week — let us practice theatrical thrift over the coming days!'
   ]
   return lines.join('\n')
@@ -150,9 +193,10 @@ function monthSummary(s: AppState, now: Date): string {
   const a = fv.alloc
   const lines = [
     '🏰 The Grand Monthly Vault of Affairs 🏰',
+    '"I may be impoverished, Bébé, but I shall never be unkempt!"',
     '',
     `• Monthly Inflow: ${fmt(a.salary)}`,
-    `• PG Sanctum Rent: ${fmt(a.rent)}`,
+    `• PG Sanctum Rent: ${fmt(a.rent)} (shelter is non-negotiable)`,
     `• Fixed Commitments (Gym/Bills): ${fmt(a.fixed)}`,
     `• Debt Obligation: ${fmt(a.debt)} (Remaining: ${fmt(fv.debt.remaining)})`,
     `• Sacred Savings (untouchable!): ${fmt(a.savings)}`,
@@ -171,14 +215,14 @@ function gymSplit(now: Date): string {
 
   const lines = [
     `🏛️ Sculpting the Divine Silhouette — ${focus} 🏛️`,
-    'Fold in the iron, Bébé! Strut with the majesty of a gazelle!',
+    '"Fold in the iron, Bébé! Strut with the majesty of a gazelle across the Serengeti!"',
     '',
   ]
 
   if (key === 'sun') {
     lines.push('Rest, darling! Replenish your radiant vessel with languid slumber and leisurely strolls.')
   } else {
-    lines.push(`Focus: ${focus}`)
+    lines.push(`Today\'s Muscle Masterpiece: ${focus}`)
     lines.push('Ticking off your 60-min round-trip walk? Send: walk (+5,500 steps!)')
   }
   return lines.join('\n')
@@ -190,7 +234,7 @@ function mealSuggestions(slot?: string): string {
 
   const lines = [
     `🍳 Gastronomical Inspiration for ${chosenSlot}, Bébé! 🍳`,
-    'Even in the humble kitchenette of a PG, one must dine like nobility!',
+    '"What does burning do?! Just fold in the cheese, darling! Even in a PG, we dine like royalty!"',
     '',
   ]
 
@@ -201,7 +245,7 @@ function mealSuggestions(slot?: string): string {
   })
 
   lines.push('')
-  lines.push('When you have feasted, tell me: "ate 3 eggs p20" (or: "ate paneer bhurji p28 ₹60")')
+  lines.push('When you have feasted, tell your mother: "ate 3 eggs p20" (or: "ate paneer bhurji p28 ₹60")')
   return lines.join('\n')
 }
 
@@ -244,6 +288,7 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
   if (lower.includes('how are you') || ['sup', 'wassup', 'whats up'].includes(cmd)) {
     return noChange('Languishing in artistic exile, but persevering with supreme elegance, Bébé! Ready to tally your expenditures and keep our coffers pristine! 🎭')
   }
+
   if (['today', 'day', 'status', 'balance', 'bal', 'left', 'summary', '/today'].includes(cmd)) return noChange(summary(state, now))
   if (['week', 'weekly', '/week'].includes(cmd)) return noChange(weekSummary(state, now))
   if (['month', 'monthly', '/month'].includes(cmd)) return noChange(monthSummary(state, now))
@@ -259,7 +304,7 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
       `• Debt Cleared: ${fmt(fv.debt.paidSoFar)} / ${fmt(fv.debt.total)} (Owed: ${fmt(fv.debt.remaining)})`,
       `• Emergency Stash: ${fmt(fv.buffer.left)}`,
       '',
-      'One does not pilfer from the vault, Bébé. It is our fortress against penury!'
+      '"One does not pilfer from the vault, Bébé. It is our fortress against penury!"'
     ].join('\n'))
   }
 
@@ -277,12 +322,8 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
     const title = words.filter((w) => !w.startsWith('#')).join(' ').trim()
     const category = (tag && TAGS[tag]) || guessCategory(`${title} ${cmd}`)
     const next = A.addExpense({ amount, title: title || category, category, date: today })(state)
-    const reaction = amount >= 1000
-      ? '👑 A lavish, Gatsby-esque indulgence, Bébé!'
-      : amount >= 300
-      ? '🎭 A dramatic expenditure registered!'
-      : '✨ Duly noted, darling.'
-    return done(next, `${reaction} Logged ${fmt(amount)} for ${category}${title ? ` (${title})` : ''}.\n${limitLine(next, now)}`)
+    const reaction = moiraExpenseReaction(amount)
+    return done(next, `${reaction}\nLogged ${fmt(amount)} for ${category}${title ? ` (${title})` : ''}.\n${limitLine(next, now)}`)
   }
   if (isExpenseWord) return noChange('How much lucre was surrendered, Bébé? Example: spent 120 auto')
 
@@ -297,14 +338,19 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
   if (cmd === 'glass') {
     const next = A.addWater(today, 250, 'Glass')(state)
     const st = dayStats(next, today)
-    return done(next, `💧 +250 mL ingested! One\'s epidermis rejoices, Bébé! (${litres(st.waterMl)} / ${litres(st.waterTarget)})`)
+    const quote = pick([
+      'One\'s epidermis rejoices, Bébé!',
+      'Guzzle it down! We cannot afford luxury anti-aging creams right now!',
+      'Hydration is your Crème de la Mer, child!',
+    ])
+    return done(next, `💧 +250 mL ingested! ${quote} (${litres(st.waterMl)} / ${litres(st.waterTarget)})`)
   }
   if (['water', 'w', 'drank', 'drink'].includes(cmd)) {
     const raw = parseAmount(restTokens[0] ?? '')
     if (raw === null) {
       const st = dayStats(state, today)
       const pct = Math.round((st.waterMl / st.waterTarget) * 100)
-      return noChange(`💧 Crystalline Libations: ${litres(st.waterMl)} / ${litres(st.waterTarget)} [${progressBar(st.waterMl, st.waterTarget)}] ${pct}%\nGuzzle more, Bébé! Send: water 500 or glass`)
+      return noChange(`💧 Crystalline Libations: ${litres(st.waterMl)} / ${litres(st.waterTarget)} [${progressBar(st.waterMl, st.waterTarget)}] ${pct}%\nGuzzle more, Bébé! No offspring of mine shall walk the earth looking like a desiccated apricot!\nSend: water 500 or glass`)
     }
     const ml = raw <= 10 ? raw * 1000 : raw
     const next = A.addWater(today, ml, 'Water')(state)
@@ -320,7 +366,7 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
     const credit = dayStats(state, today).stepCredit
     const next = isSet ? A.setExtraSteps(today, Math.max(0, n - credit))(state) : A.addSteps(today, n)(state)
     const st = dayStats(next, today)
-    return done(next, `🚶 Perambulations: ${num(st.steps)} of ${num(st.stepTarget)}${st.steps >= st.stepTarget ? ' 🏆 The gazelle reaches the summit!' : ` · ${num(st.stepTarget - st.steps)} paces to go`}`)
+    return done(next, `🚶 Perambulations: ${num(st.steps)} of ${num(st.stepTarget)}${st.steps >= st.stepTarget ? ' 🏆 The gazelle reaches the summit of Mount Olympus!' : ` · ${num(st.stepTarget - st.steps)} paces to go`}`)
   }
   if (cmd === 'walk') {
     const already = !!(state.dayLogs[today]?.habits ?? {}).walk
@@ -328,7 +374,7 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
     const st = dayStats(next, today)
     return already
       ? noChange('Your majestic 60-min gym walk has already been immortalized today, darling!')
-      : done(next, `🚶 The 60-min gym pilgrimage is complete! (+5,500 steps). Total: ${num(st.steps)} of ${num(st.stepTarget)}`)
+      : done(next, `🚶 The 60-min gym pilgrimage is complete! (+5,500 steps). Total: ${num(st.steps)} of ${num(st.stepTarget)}\nA Rose never slouches!`)
   }
 
   // ---- meals
@@ -347,7 +393,7 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
     const slot = slotFor(now.getHours())
     const next = A.addMeal({ date: today, slot, title: words.join(' '), appliances: [], cost, protein })(state)
     const st = dayStats(next, today)
-    return done(next, `🍽️ ${slot}: ${words.join(' ')}${protein ? ` · ${protein}g protein` : ''}${cost ? ` · ${fmt(cost)} Outside Food` : ''}\nProtein tally: ${st.proteinG} / ${next.targets.proteinG} g`)
+    return done(next, `🍽️ ${slot}: ${words.join(' ')}${protein ? ` · ${protein}g protein` : ''}${cost ? ` · ${fmt(cost)} Outside Food` : ''}\nProtein tally: ${st.proteinG} / ${next.targets.proteinG} g. Sustenance for my favorite offspring!`)
   }
 
   // ---- tasks
@@ -373,7 +419,7 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
     if (!q) return noChange('Which chore was vanquished? Example: done soap')
     const t = state.tasks.find((x) => !x.done && x.title.toLowerCase().includes(q))
     if (!t) return noChange(`No open obligation matches "${rest}", darling. Send "tasks" to inspect them.`)
-    return done(A.toggleTask(t.id)(state), `✨ Vanquished! "${t.title}" is struck from existence!`)
+    return done(A.toggleTask(t.id)(state), `✨ Vanquished! "${t.title}" is struck from existence! Cinderella could never!`)
   }
   if (['tasks', 'list', 'todos'].includes(cmd)) {
     const fv = computeFinance(state, today)
@@ -391,7 +437,7 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
     const perDay = a.pocket / fv.cycle.totalDays
     return done(
       next,
-      `🎉 Oh, the bounty! ${fmt(n)} has descended into our coffers!\nSanctum Rent: ${fmt(a.rent)} · Commitments: ${fmt(a.fixed)} · Debt: ${fmt(a.debt)} · Sacred Savings: ${fmt(a.savings)}\nPocket Discretionary Pool: ${fmt(a.pocket)} (≈ ${fmt(perDay)}/day · ${fmt(perDay * 7)}/week)`,
+      `🎉 Oh, the bounty! ${fmt(n)} has descended into our coffers!\nSanctum Rent: ${fmt(a.rent)} · Commitments: ${fmt(a.fixed)} · Debt: ${fmt(a.debt)} · Sacred Savings: ${fmt(a.savings)}\nPocket Discretionary Pool: ${fmt(a.pocket)} (≈ ${fmt(perDay)}/day · ${fmt(perDay * 7)}/week)\nOur dynasty will rise again!`,
     )
   }
   if (cmd === 'debt') {
