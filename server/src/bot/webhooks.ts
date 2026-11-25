@@ -67,11 +67,30 @@ function validSignature(req: Request, secret: string): boolean {
   return got.length === expected.length && crypto.timingSafeEqual(Buffer.from(got), Buffer.from(expected))
 }
 
+export const botDiagnostics = {
+  lastIncoming: null as any,
+  lastOutgoing: null as any,
+  configured: {
+    whatsapp: false,
+    phoneId: '',
+    allowed: [] as string[],
+    tokenLength: 0,
+    tokenPrefix: '',
+  },
+}
+
 export function botRouter(cfg: BotConfig, deps: BotDeps): Router {
   const r = Router()
 
   if (cfg.whatsapp) {
     const wa = cfg.whatsapp
+    botDiagnostics.configured = {
+      whatsapp: true,
+      phoneId: wa.phoneId,
+      allowed: wa.allowed,
+      tokenLength: wa.token.length,
+      tokenPrefix: wa.token.slice(0, 10) + '...',
+    }
 
     // Meta calls this once when you save the webhook in the developer dashboard.
     r.get('/whatsapp', (req: Request, res: Response) => {
@@ -89,6 +108,12 @@ export function botRouter(cfg: BotConfig, deps: BotDeps): Router {
         (req.body?.entry ?? []).flatMap((e: any) => (e.changes ?? []).flatMap((c: any) => c.value?.messages ?? [])) as Array<{
           id: string; from: string; type: string; text?: { body: string }
         }>
+      botDiagnostics.lastIncoming = {
+        at: new Date().toISOString(),
+        count: messages.length,
+        froms: messages.map((m) => m.from),
+        texts: messages.map((m) => m.text?.body),
+      }
       for (const m of messages) {
         if (!remember(m.id)) continue
         if (!wa.allowed.includes(digits(m.from))) continue // silently ignore everyone except you
@@ -129,12 +154,29 @@ export function makeSenders(cfg: BotConfig): Pick<BotDeps, 'sendWhatsApp' | 'sen
     async sendWhatsApp(to, text) {
       const wa = cfg.whatsapp
       if (!wa) return
-      const res = await fetch(`https://graph.facebook.com/${wa.apiVersion}/${wa.phoneId}/messages`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${wa.token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messaging_product: 'whatsapp', to, type: 'text', text: { body: text.slice(0, 4000) } }),
-      })
-      if (!res.ok) console.error('WhatsApp send failed', res.status, (await res.text()).slice(0, 300))
+      try {
+        const res = await fetch(`https://graph.facebook.com/${wa.apiVersion}/${wa.phoneId}/messages`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${wa.token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messaging_product: 'whatsapp', to, type: 'text', text: { body: text.slice(0, 4000) } }),
+        })
+        const body = await res.text()
+        botDiagnostics.lastOutgoing = {
+          at: new Date().toISOString(),
+          to,
+          status: res.status,
+          ok: res.ok,
+          response: body.slice(0, 500),
+        }
+        if (!res.ok) console.error('WhatsApp send failed', res.status, body.slice(0, 300))
+      } catch (err: any) {
+        botDiagnostics.lastOutgoing = {
+          at: new Date().toISOString(),
+          to,
+          error: err.message,
+        }
+        console.error('WhatsApp fetch error', err)
+      }
     },
     async sendTelegram(chatId, text) {
       const tg = cfg.telegram

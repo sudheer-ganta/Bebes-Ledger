@@ -6,6 +6,7 @@ import {
   WorkoutLog, type AnyModel,
 } from './models.js'
 import { loadSnapshot, saveSnapshot, SnapshotZ, touchConfig } from './state.js'
+import { botDiagnostics } from './bot/webhooks.js'
 
 export const api = Router()
 
@@ -16,6 +17,10 @@ const wrap =
 // ---------- health (no auth: lets the client detect the server) ----------
 api.get('/health', (_req, res) => {
   res.json({ ok: true, db: mongoose.connection.readyState === 1 })
+})
+
+api.get('/bot-status', (_req, res) => {
+  res.json(botDiagnostics)
 })
 
 // ---------- optional API key ----------
