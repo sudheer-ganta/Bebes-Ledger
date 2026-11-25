@@ -88,13 +88,19 @@ function progressBar(current: number, target: number, length = 8): string {
   return '█'.repeat(filled) + '░'.repeat(length - filled)
 }
 
-let lastFallbackIdx = -1
-function pickFallback(arr: string[]): string {
-  let idx = Math.floor(Math.random() * arr.length)
-  if (idx === lastFallbackIdx) idx = (idx + 1) % arr.length
-  lastFallbackIdx = idx
-  return arr[idx]
+const lastPickedMap = new Map<string, number>()
+function pickNoRepeat(key: string, arr: string[]): string {
+  if (arr.length <= 1) return arr[0] ?? ''
+  const prev = lastPickedMap.get(key) ?? -1
+  let next = Math.floor(Math.random() * arr.length)
+  if (next === prev) {
+    next = (next + 1) % arr.length
+  }
+  lastPickedMap.set(key, next)
+  return arr[next]
 }
+
+let lastMorningCount = 0
 
 const spendToday = (s: AppState, date: string): number =>
   s.expenses.filter((e) => e.date === date).reduce((acc, e) => acc + e.amount, 0)
@@ -108,7 +114,7 @@ function moiraScoldOverspend(name: string, over: number): string {
     `😱 Over by ${fmt(over)}! Pish-posh on your spreadsheet, ${name}. Tomorrow we tighten our belts!`,
     `😱 Over by ${fmt(over)}, ${name}! I am suddenly overwhelmed by a wave of apathy!`,
   ]
-  return pick(quotes)
+  return pickNoRepeat('overspend', quotes)
 }
 
 function moiraPraiseThrift(name: string, left: number, limit: number, weekendPot: number): string {
@@ -118,25 +124,25 @@ function moiraPraiseThrift(name: string, left: number, limit: number, weekendPot
     `💰 Left: ${fmt(left)}. Johnny would weep. Stashing it for that ₹1.5k weekend movie nonsense?`,
     `💰 Left: ${fmt(left)}. Look at you, my little financial ascetic. Don't blow it tonight.`,
   ]
-  return pick(quotes)
+  return pickNoRepeat('thrift', quotes)
 }
 
 function moiraExpenseReaction(name: string, amount: number): string {
   if (amount >= 1200) {
-    return pick([
+    return pickNoRepeat('exp_high', [
       `Are we financing a local production of Cabaret, ${name}? Stop acting like a disgruntled pelican!`,
       `Vanished into the ether! You're giving me agita, ${name}. What you did was impulsive, capricious, and wrong.`,
       `I am incapable of dealing with this level of mediocrity, darling.`,
     ])
   }
   if (amount >= 400) {
-    return pick([
+    return pickNoRepeat('exp_med', [
       `It’s a rare gift to strip vanity of its charm, ${name}, yet here you are.`,
       `Fold in the cheese tomorrow, Bébé. You're bleeding us dry.`,
       `Have I been let go? Because this is borderline offensive, ${name}.`,
     ])
   }
-  return pick([
+  return pickNoRepeat('exp_low', [
     `Try not to make poverty a lifestyle, ${name}.`,
     `Stop pettifogging over pennies and earn some real money, ${name}.`,
     `Fine, noted. Don't look at me like that, ${name}.`,
@@ -290,14 +296,32 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
   if (['help', '?', 'menu', 'start', '/start', '/help'].includes(cmd)) return noChange(HELP)
 
   // ---- Moira Conversational Easter Eggs & Greetings
-  if (/\b(morning|gm|good morrow|bon matin)\b/i.test(lower) || ['gm', 'morning'].includes(cmd)) {
+  const isMorning =
+    /\b(morning|mrng|good morning|good mrng|gm|good morrow|bon matin)\b/i.test(lower) ||
+    ['gm', 'mrng', 'morning'].includes(cmd)
+  if (isMorning) {
+    lastMorningCount++
+    if (lastMorningCount >= 3) {
+      return noChange(
+        pickNoRepeat('morning_spam', [
+          `${name} you fusssssssyyyyy little fuckerrrrrrrrrrr go away!`,
+          `What do you want now?! You've said morning ${lastMorningCount} times!`,
+          `Are you stuck on a loop, ${name}?! Stop shouting greetings and tell me what you spent!`,
+        ])
+      )
+    }
     const morningQuotes = [
+      `${name} you fusssssssyyyyy little fuckerrrrrrrrrrr go away!`,
+      `What do you want now?!`,
+      `Bébé, good mrng. Stop barking at me and tell me what you spent.`,
       `Morning, ${name}. Did we wake up in a worse tax bracket? That sweater looks like a cry for help. 🌅`,
       `Bon matin, ${name}. Keep your voice down, my eyes are still adjusting to the glare of poverty. ☀️`,
       `Top of the morning. Tell me you brewed something potable, I refuse to face you unmedicated. ☕`,
+      `Bébé, good mrng. Stop acting like a disgruntled pelican and tell me what you bought.`,
     ]
-    return noChange(pick(morningQuotes))
+    return noChange(pickNoRepeat('morning', morningQuotes))
   }
+  lastMorningCount = 0
   if (lower.includes('did you sleep') || lower.includes('did u slept') || lower.includes('slept last night') || lower.includes('sleep last night')) {
     return noChange(`Sleep? In this establishment, ${name}?! I was kept awake by the tragic acoustics and Johnny's fitful tossing. What do you want?`)
   }
@@ -328,7 +352,7 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
       `Bonne nuit, ${name}. Put away that rectangle and don't wander off with local strays. 🛌`,
       `Good night, ${name}. Extinguish the lights and wake me only if our fortune returns. 😴`,
     ]
-    return noChange(pick(nightQuotes))
+    return noChange(pickNoRepeat('night', nightQuotes))
   }
   if (['thanks', 'thank you', 'ty', 'thx'].includes(cmd)) {
     return noChange(`You're welcome, ${name}. Don't expect applause for the bare minimum.`)
@@ -582,5 +606,5 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
     `Darling, I am incapable of doing anything with subtlety. Tell me what you need before I have an apoplexy.`,
     `Look at you, ${name}. A walking cry for help. Drink some water and fold in the cheese.`,
   ]
-  return noChange(pickFallback(chatFallbacks))
+  return noChange(pickNoRepeat('fallbacks', chatFallbacks))
 }
