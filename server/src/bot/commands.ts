@@ -7,6 +7,7 @@ import { dayStats } from '../../../client/src/lib/day'
 import { computeFinance } from '../../../client/src/lib/finance'
 import { deriveAutoTasks } from '../../../client/src/lib/smart'
 import { fmt, litres, num } from '../../../client/src/lib/util'
+import { answer, classify, CONFIDENT, INTENTS, train } from './brain'
 import { CRISIS_MEALS, DAY_FOCUS, DAY_KEYS } from '../../../client/src/lib/defaults'
 
 export interface BotResult {
@@ -34,6 +35,9 @@ export const HELP = [
   '• 120 auto  (or: gave 300 to rahul for lunch) — Confess an expenditure',
   '• what did i spend today  ·  can i afford a movie for 400 — Ask your mother',
   '• how am i doing  ·  good night — The day reviewed, mercilessly',
+  '• where did my money go · debt left · grocery list · gym tomorrow · how was my week — Ask me anything',
+  '• mood 4  ·  win: got the call  ·  struggle: no sleep  ·  note: … — Your journal',
+  '• teach money paisa kitna bacha  ·  unknowns  ·  intents — Teach me new words',
   '• water 500  (or: glass) — Imbibe potable crystalline libations',
   '• walk  (or: steps 3000 / steps set 6000) — Grand perambulations',
   '• ate 3 eggs p20 — Record your protein intake',
@@ -105,6 +109,10 @@ export interface BotMemory {
   history?: Array<{ role: 'user' | 'assistant'; text: string }>
   /** Gemini calls today, for the daily cap */
   ai?: { day: string; count: number }
+  /** phrases taught from chat ("teach money paisa left"), added to the brain's training */
+  learned?: Array<{ phrase: string; intent: string }>
+  /** recent messages nobody understood, so you can teach them */
+  unknown?: string[]
 }
 export const emptyMemory = (): BotMemory => ({ picks: {}, morning: { count: 0, at: 0 } })
 
@@ -148,6 +156,34 @@ export function moneyToday(s: AppState, today: string) {
   return { fv, spent, limit: Math.round(fv.dailyLimit), left: fv.todayLeft, week: fv.weekLeft }
 }
 
+/**
+ * Before salary there is no money to budget, so Moira says you're broke instead of quoting a planned
+ * "₹189 a day" that doesn't exist yet.
+ */
+function brokeQuote(name: string): string {
+  return pickNoRepeat('broke', [
+    `"Poverty is a state of mind, ${name}, and I simply refuse to grant it residency in mine."`,
+    `We are not "broke", ${name}. We are merely on an aggressive, unrequested sabbatical from commerce.`,
+    `One may lack currency, darling, yet still possess an abundance of taste, which is far harder to acquire.`,
+    `If we cannot afford a proper dinner, we shall dine on posture, hauteur, and whatever complimentary crackers are left in the lobby.`,
+    `Money comes and goes, bébé, like unreliable backup dancers. The true star of the show remains standing regardless.`,
+    `How much money? Darling, we are between engagements. The coffers are resting.`,
+    `The purse is not empty, ${name}. It is merely... minimalist.`,
+  ])
+}
+
+/** "💸 No salary until Sun, 7 Dec (12 days). Spent today ₹40 · ₹1,200 since the last payday." */
+export function brokeStatus(s: AppState, today: string): string {
+  const fv = computeFinance(s, today)
+  const c = fv.cycle
+  const spent = spendToday(s, today)
+  const since = s.expenses.filter((e) => e.date >= c.start && e.date <= today).reduce((a, e) => a + e.amount, 0)
+  const when = fv.waitingFirst
+    ? `No salary until ${fmtDate(c.nextPayday, { weekday: 'short', day: 'numeric', month: 'short' })} (${c.daysToPayday} day${c.daysToPayday === 1 ? '' : 's'})`
+    : `Salary day was ${fmtDate(c.start, { day: 'numeric', month: 'short' })}; send "salary <amount>" once it's credited`
+  return `💸 ${when}. Spent today ${fmt(spent)}${since > spent ? ` · ${fmt(since)} since the last payday` : ''}.`
+}
+
 const partOfDay = (h: number) => (h < 5 ? 'late' : h < 12 ? 'morning' : h < 17 ? 'afternoon' : h < 22 ? 'evening' : 'late')
 const clock = (now: Date) => now.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true })
 
@@ -163,7 +199,15 @@ function nudge(s: AppState, now: Date): string {
   const st = dayStats(s, today)
   const walked = !!s.dayLogs[today]?.habits?.walk
 
-  if (m.left < 0) {
+  // before salary there's no allowance to be "over"; only nag if money is going out at all
+  if (m.fv.pending) {
+    if (h >= 12 && m.spent > 0) {
+      return pickNoRepeat('n_broke', [
+        `${fmt(m.spent)} spent today, and not a rupee of salary in sight. Bold, ${name}. Reckless, but bold.`,
+        `We are broke and yet ${fmt(m.spent)} has left the building today. Explain yourself, bébé.`,
+      ])
+    }
+  } else if (m.left < 0) {
     return pickNoRepeat('n_over', [
       `And you're ${fmt(-m.left)} over today's ${fmt(m.limit)} already. Agita, ${name}. Pure agita.`,
       `We are ${fmt(-m.left)} past today's limit, darling. The purse is closed.`,
@@ -191,7 +235,7 @@ function nudge(s: AppState, now: Date): string {
       `${st.proteinG} g protein today. Muscles are not built on optimism, darling.`,
     ])
   }
-  if (h >= 12 && m.left > 0) {
+  if (h >= 12 && !m.fv.pending && m.left > 0) {
     return pickNoRepeat('n_good', [
       `${fmt(m.left)} of today's ${fmt(m.limit)} still intact. I'm almost proud, ${name}.`,
       `You've spent ${fmt(m.spent)} today and kept ${fmt(m.left)}. Restraint suits you.`,
@@ -221,9 +265,9 @@ export function factsFor(s: AppState, now: Date): string {
     `Name: ${userName(s)}`,
     `Now: ${fmtDate(today, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}, ${clock(now)} (India time)`,
     fv.pending
-      ? `Salary: NOT yet received this month; payday in ${fv.cycle.daysToPayday} day(s). Spending follows a planned ${fmt(m.limit)}/day until then.`
+      ? `Salary: NOT received yet. The user is broke until payday (${brokeStatus(s, today).replace(/^💸 /, '')}). There is NO daily allowance or budget until then; never quote one. Treat any spending as dipping into nothing, and tease them about being broke.`
       : `Salary: received. Pocket pool left ${fmt(fv.remaining)} for ${fv.cycle.daysLeft} more day(s) until payday.`,
-    `Today: limit ${fmt(m.limit)}, spent ${fmt(m.spent)}, ${m.left >= 0 ? `left ${fmt(m.left)}` : `OVER by ${fmt(-m.left)}`}`,
+    fv.pending ? '' : `Today: limit ${fmt(m.limit)}, spent ${fmt(m.spent)}, ${m.left >= 0 ? `left ${fmt(m.left)}` : `OVER by ${fmt(-m.left)}`}`,
     fv.pending ? '' : `This week left: ${fmt(fv.weekLeft)} · Weekend/outings fund left: ${fmt(fv.lifestyle.left)} · Groceries left: ${fmt(fv.groceries.left)} · Emergency buffer: ${fmt(fv.buffer.left)}`,
     `Today's expenses: ${todays.length ? todays.map((e) => `${fmt(e.amount)} ${e.title} (${e.category})`).join('; ') : 'none'}`,
     `Spending, last 7 days: ${week.join(', ')}`,
@@ -302,14 +346,7 @@ function summary(s: AppState, now: Date): string {
 
   const lines = [`🎭 ${name} — ${dateStr}`]
   if (fv.pending) {
-    const plannedPerDay = Math.round(fv.plan.pocket / fv.cycle.totalDays)
-    const spent = spendToday(s, today)
-    const leftToday = plannedPerDay - spent
-    lines.push(
-      leftToday < 0
-        ? `😱 Over planned limit by ${fmt(-leftToday)}! You fussy little fucker, ${name}!`
-        : `💰 Plan: ${fmt(plannedPerDay)}/day (awaiting salary in ${fv.cycle.daysToPayday}d). Left today: ${fmt(leftToday)}.`
-    )
+    lines.push(brokeQuote(name), brokeStatus(s, today))
   } else {
     const left = fv.todayLeft
     const weekendPot = Math.max(0, fv.lifestyle.left)
@@ -411,14 +448,7 @@ function limitLine(s: AppState, now: Date): string {
   const name = userName(s)
   const today = toISO(now)
   const fv = computeFinance(s, today)
-  if (fv.pending) {
-    const plannedPerDay = Math.round(fv.plan.pocket / fv.cycle.totalDays)
-    const spent = spendToday(s, today)
-    const left = plannedPerDay - spent
-    return left < 0
-      ? `😱 Over planned limit by ${fmt(-left)}! You fussy little fucker, ${name}! Never let the bastards get you down.`
-      : `✨ Left today: ${fmt(left)} of ${fmt(plannedPerDay)} (awaiting salary in ${fv.cycle.daysToPayday}d)`
-  }
+  if (fv.pending) return brokeStatus(s, today)
   return fv.todayLeft < 0
     ? `😱 Over by ${fmt(-fv.todayLeft)}! You fussy little fucker, ${name}! Never let the bastards get you down.`
     : `✨ Left today: ${fmt(fv.todayLeft)} · Weekend Fund: ${fmt(Math.max(0, fv.lifestyle.left))}`
@@ -431,6 +461,8 @@ function limitLine(s: AppState, now: Date): string {
 export function runCommand(state: AppState, input: string, now: Date = new Date(), memory?: BotMemory): BotResult & { memory: BotMemory } {
   if (memory) mem = structuredClone({ ...emptyMemory(), ...memory })
   const r = handle(state, input, now)
+  // remember what nobody understood, so it can be taught later ("unknowns")
+  if (r.fallback && input.trim()) mem.unknown = [...(mem.unknown ?? []).filter((u) => u !== input.trim()), input.trim().slice(0, 120)].slice(-20)
   return { ...r, memory: mem }
 }
 
@@ -448,6 +480,42 @@ function handle(state: AppState, input: string, now: Date): BotResult {
   const rest = restTokens.join(' ')
 
   if (['help', '?', 'menu', 'start', '/start', '/help'].includes(cmd)) return noChange(HELP)
+
+  // ---- teaching the brain from chat
+  if (cmd === 'intents') return noChange(`🧠 Things I understand: ${INTENTS.join(', ')}.\nTeach me a new way to say one: "teach money paisa kitna bacha"`)
+  if (cmd === 'unknowns') {
+    const u = mem.unknown ?? []
+    return noChange(u.length ? `🤷 Recently I didn't understand:\n${u.slice(-10).map((x, i) => `${i + 1}. ${x}`).join('\n')}\nTeach one: "teach <${INTENTS.slice(0, 3).join('|')}|…> <phrase>"` : `I have understood everything you said, ${name}. Remarkable, for both of us.`)
+  }
+  if (cmd === 'teach') {
+    const [intent, ...phrase] = restTokens
+    const key = intent?.toLowerCase()
+    if (!key || !INTENTS.includes(key) || !phrase.length) return noChange(`Teach me like this: "teach money paisa kitna bacha". Send "intents" for the list.`)
+    const p = phrase.join(' ').slice(0, 120)
+    mem.learned = [...(mem.learned ?? []).filter((l) => l.phrase !== p), { phrase: p, intent: key }].slice(-200)
+    mem.unknown = (mem.unknown ?? []).filter((u) => u.toLowerCase() !== p.toLowerCase())
+    return noChange(`🧠 Learned: "${p}" means ${key}. I am, as ever, a quick study.`)
+  }
+
+  // ---- journal: "mood 4", "energy 2", "win: got the call", "struggle: no sleep", "note: ...", "tomorrow: gym early"
+  const moodM = /^(mood|energy)\s+([1-5])\b\s*(.*)$/i.exec(text)
+  if (moodM) {
+    const field = moodM[1].toLowerCase() as 'mood' | 'energy'
+    const v = Number(moodM[2])
+    let next = A.saveJournal(today, { [field]: v })(state)
+    if (moodM[3]) next = A.saveJournal(today, { notes: [state.journal[today]?.notes, moodM[3]].filter(Boolean).join('\n') })(next)
+    const say = v >= 4 ? 'Radiant. I shall bask in it.' : v === 3 ? 'Perfectly adequate, darling.' : 'Oh, bébé. Tomorrow we rise, in good lighting.'
+    return done(next, `📓 ${field === 'mood' ? 'Mood' : 'Energy'} ${v}/5 saved. ${say}`)
+  }
+  const jM = /^(win|wins|struggle|struggles|note|notes|journal|tomorrow)\s*[:\-]\s*(.+)$/i.exec(text) ?? (/^journal\s+(.+)$/i.exec(text) ? ['', 'note', text.slice(8)] : null)
+  if (jM) {
+    const k = jM[1].toLowerCase()
+    const field = k.startsWith('win') ? 'wins' : k.startsWith('strug') ? 'struggles' : k === 'tomorrow' ? 'tomorrow' : 'notes'
+    const prev = state.journal[today]?.[field] ?? ''
+    const next = A.saveJournal(today, { [field]: [prev, jM[2].trim()].filter(Boolean).join('\n') })(state)
+    const say = field === 'wins' ? 'Applause! Brava!' : field === 'struggles' ? 'Noted with love. We endure.' : field === 'tomorrow' ? 'The plan is set. Do not betray it.' : 'Inscribed in the memoirs.'
+    return done(next, `📓 Added to today's ${field}. ${say}`)
+  }
 
   // ---- Moira Conversational Easter Eggs & Greetings
   // the whole message must be a greeting: "500 gm paneer" or "task morning run" are not
@@ -486,9 +554,9 @@ function handle(state: AppState, input: string, now: Date): BotResult {
     }
     // the first greeting of the day also tells you the plan
     const m = moneyToday(state, today)
-    const plan = mem.morning.count === 1
-      ? `\n💰 Today: ${fmt(Math.max(0, m.left))} to spend${m.week !== null ? ` · ${fmt(Math.max(0, m.week))} left this week` : ''}. 💧 Start with a glass of water.`
-      : ''
+    const plan = mem.morning.count !== 1 ? ''
+      : m.fv.pending ? `\n${brokeStatus(state, today)} 💧 Water, at least, is free.`
+      : `\n💰 Today: ${fmt(Math.max(0, m.left))} to spend${m.week !== null ? ` · ${fmt(Math.max(0, m.week))} left this week` : ''}. 💧 Start with a glass of water.`
     return noChange(pickNoRepeat('morning', morningQuotes) + plan)
   }
   mem.morning.count = 0
@@ -662,6 +730,9 @@ function handle(state: AppState, input: string, now: Date): BotResult {
     const want = amtTok ? parseAmount(amtTok)! : null
     const isOuting = /\b(movie|movies|cinema|date|party|pub|drinks|concert|outing|weekend)\b/.test(lower)
     const fun = m.fv.pending ? null : Math.max(0, m.fv.lifestyle.left)
+    if (m.fv.pending) {
+      return noChange(`Afford it? With what, darling? ${want ? `${fmt(want)} is a fantasy until payday.` : 'We are a woman of means without the means.'}\n${brokeStatus(state, today)}`)
+    }
     if (want === null) {
       return noChange(`You have ${fmt(Math.max(0, m.left))} left today${m.week !== null ? ` and ${fmt(Math.max(0, m.week))} this week` : ''}${isOuting && fun !== null ? `; the weekend fund holds ${fmt(fun)}` : ''}. Tell me the price, ${name}, and I'll rule on it.`)
     }
@@ -678,10 +749,19 @@ function handle(state: AppState, input: string, now: Date): BotResult {
     }
     return noChange(`Absolutely not. ${fmt(want)} against ${fmt(Math.max(0, m.left))} left today${m.week !== null ? ` and ${fmt(Math.max(0, m.week))} this week` : ''}. Put it back, ${name}.`)
   }
+  // "how much money do I have (left)?" in any wording: always the rules, so the numbers are exact
+  if (/\b(how much|what'?s|what is|show)\b.*\b(money|cash|balance)\b|\bmoney (do i have|left)\b|\bam i broke\b/.test(lower)) {
+    const fv = computeFinance(state, today)
+    if (fv.pending) return noChange(`${brokeQuote(name)}\n${brokeStatus(state, today)}`)
+    const m = moneyToday(state, today)
+    return noChange(`💰 ${m.left >= 0 ? `${fmt(m.left)} left today` : `${fmt(-m.left)} over today`} · ${fmt(Math.max(0, fv.weekLeft))} this week · ${fmt(fv.remaining)} in the pool for ${fv.cycle.daysLeft} days.\n${m.left < 0 ? `The purse is closed, ${name}.` : `Spend it like someone is watching, ${name}. I am.`}`)
+  }
   if (/\b(how am i doing|how'?s my day|how is my day|how did i do|am i (doing )?(ok|okay|good|fine))\b/.test(lower)) {
     const m = moneyToday(state, today)
     const st = dayStats(state, today)
-    const verdict = m.left < 0 ? `Over budget by ${fmt(-m.left)}.` : `${fmt(m.spent)} spent, ${fmt(m.left)} left.`
+    const verdict = m.fv.pending
+      ? `No salary yet, ${fmt(m.spent)} spent today.`
+      : m.left < 0 ? `Over budget by ${fmt(-m.left)}.` : `${fmt(m.spent)} spent, ${fmt(m.left)} left.`
     return noChange(`📋 ${verdict} 💧 ${litres(st.waterMl)}/${litres(st.waterTarget)} · 🚶 ${num(st.steps)}/${num(st.stepTarget)} · 🥩 ${st.proteinG}/${state.targets.proteinG} g\n${nudge(state, now) || `A respectable showing, ${name}. Don't let it go to your head.`}`)
   }
 
@@ -719,6 +799,37 @@ function handle(state: AppState, input: string, now: Date): BotResult {
     return done(next, `✨ Logged ${fmt(amount)} for ${category}${title ? ` (${title})` : ''}. ${reaction}\n${limitLine(next, now)}`)
   }
   if (isExpenseWord) return { ...noChange(`How much lucre was surrendered, ${name}? Tell me the damage, darling!`), fallback: true }
+
+  // ---- feelings: "i'm so tired", "feeling great today" get warmth, not statistics (and no AI call)
+  const SAD = /\b(sad|low|down|tired|exhausted|stressed|anxious|lonely|depressed|upset|angry|frustrated|awful|terrible|sick|worried|crying|hopeless|overwhelmed|miserable)\b/
+  const HAPPY = /\b(happy|great|amazing|awesome|excited|proud|fantastic|wonderful|relaxed|grateful|good mood|on top of the world)\b/
+  const SERIOUS = /\b(suicid\w*|kill myself|end it all|self harm|hurt myself|want to die|no reason to live)\b/
+  if (SERIOUS.test(lower)) {
+    return noChange(`${name}, I'm setting the theatre aside for this. You matter far more than any budget. Please talk to someone right now: Tele-MANAS 14416 (free, 24×7, India), or someone you trust. I'm here too.`)
+  }
+  const aboutMe = /\b(i|i'?m|im|me|feeling|feel)\b/.test(lower) && !isQuestion
+  if (aboutMe && text.split(' ').length <= 12 && (SAD.test(lower) || HAPPY.test(lower))) {
+    const sad = SAD.test(lower)
+    const line = sad
+      ? pickNoRepeat('feel_sad', [
+          `Oh, bébé. Even I have days when the wig won't sit right. Water, a little food, and early to bed.`,
+          `Come here, darling. A Rose may wilt, but a Rose never stays wilted.`,
+          `It's all right to fall apart a little, ${name}. Just do it somewhere with good lighting, and then we rise.`,
+        ])
+      : pickNoRepeat('feel_happy', [
+          `Magnificent! Bottle this feeling, ${name}, we may need it in a lean month.`,
+          `There's my star. When one of us shines, all of us shine!`,
+          `Look at you, glowing like opening night. Brava, darling.`,
+        ])
+    return noChange(`${line}\n📓 Send "mood ${sad ? 2 : 4}" to put it in your journal.`)
+  }
+
+  // ---- Moira's own brain: questions about money and life, matched against trained example phrases
+  const brain = classify(text, train(mem.learned))
+  if (brain.intent && brain.score >= CONFIDENT) {
+    const reply = answer(brain.intent, text, { s: state, now, name, pick: pickNoRepeat, broke: () => brokeStatus(state, today) })
+    if (reply) return noChange(reply)
+  }
 
   // ---- conversation: only reached when the message was not a command or an expense
   // a long sentence that only tripped a keyword ("I went to a party and...") wasn't really understood
@@ -777,13 +888,18 @@ function handle(state: AppState, input: string, now: Date): BotResult {
     // close the day with its numbers and a verdict
     const m = moneyToday(state, today)
     const st = dayStats(state, today)
-    const wins = [m.left >= 0, st.waterMl >= st.waterTarget, st.steps >= st.stepTarget || !!state.dayLogs[today]?.habits?.walk].filter(Boolean).length
+    // before salary, the money win is spending nothing
+    const moneyOk = m.fv.pending ? m.spent === 0 : m.left >= 0
+    const moneyNote = m.fv.pending
+      ? (m.spent === 0 ? 'nothing spent while broke' : `${fmt(m.spent)} spent while broke`)
+      : m.left < 0 ? `${fmt(-m.left)} over` : `${fmt(m.spent)} spent, ${fmt(m.left)} kept`
+    const wins = [moneyOk, st.waterMl >= st.waterTarget, st.steps >= st.stepTarget || !!state.dayLogs[today]?.habits?.walk].filter(Boolean).length
     const verdict = wins === 3
       ? `A flawless day. I shall tell no one, lest it go to your head.`
       : wins === 2 ? `Two out of three. Respectable, not legendary.`
       : wins === 1 ? `One out of three, ${name}. Tomorrow we do better.`
       : `A catastrophe in three acts. Sleep it off.`
-    return chat(`${pickNoRepeat('night', nightQuotes)}\n📋 ${m.left < 0 ? `${fmt(-m.left)} over` : `${fmt(m.spent)} spent, ${fmt(m.left)} kept`} · 💧 ${litres(st.waterMl)}/${litres(st.waterTarget)} · 🚶 ${num(st.steps)}/${num(st.stepTarget)}\n${verdict}`)
+    return chat(`${pickNoRepeat('night', nightQuotes)}\n📋 ${moneyNote} · 💧 ${litres(st.waterMl)}/${litres(st.waterTarget)} · 🚶 ${num(st.steps)}/${num(st.stepTarget)}\n${verdict}`)
   }
   if (['thanks', 'thank you', 'ty', 'thx'].includes(cmd)) {
     return chat(`You're welcome, ${name}. Don't expect applause for the bare minimum.`)
@@ -795,15 +911,8 @@ function handle(state: AppState, input: string, now: Date): BotResult {
   if (hasWord(lower, 'budget') || hasWord(lower, 'how much') || hasWord(lower, 'can i spend') || hasWord(lower, 'allowance')) {
     const fv = computeFinance(state, today)
     const spentToday = spendToday(state, today)
-    if (fv.pending) {
-      const plannedPerDay = Math.round(fv.plan.pocket / fv.cycle.totalDays)
-      const leftToday = plannedPerDay - spentToday
-      return chat(
-        leftToday < 0
-          ? `😱 Over planned limit by ${fmt(-leftToday)}, ${name}! Stop spending!`
-          : `💰 Plan is ${fmt(plannedPerDay)} a day. You have ${fmt(leftToday)} left today (awaiting salary in ${fv.cycle.daysToPayday}d). Try not to blow it on nonsense.`
-      )
-    }
+    void spentToday
+    if (fv.pending) return chat(`${brokeQuote(name)}\n${brokeStatus(state, today)}`)
     const leftToday = fv.todayLeft
     return chat(
       leftToday < 0

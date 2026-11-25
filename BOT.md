@@ -60,11 +60,31 @@ Menus on Meta's site change; if a name below differs, look for the closest one i
 - Meta retries deliveries, so each message id is applied only once.
 - Tokens live only in Render's environment. Never put them in the code or in chat.
 
+## Moira's own brain (free, no AI service)
+Questions are matched against example phrases written into the code ([brain.ts](server/src/bot/brain.ts)). The matcher copes with typos ("monye", "grocries"), synonyms ("cash", "funds", "kharcha") and word order, then answers from your real data:
+
+| Ask | She answers |
+|---|---|
+| how much money · paisa kitna bacha | today / week / pool left (or "broke until payday") |
+| how much did i spend this week · spent yesterday | total and biggest items for that period |
+| where did my money go · spending breakdown | per-category split since payday |
+| am i spending more than last week | this week vs the same days last week |
+| debt left · savings · is rent paid · when is salary · weekend fund | from your finance settings |
+| grocery list · what ran out | this week's list, out-of-stock items |
+| what did i eat · dinner idea | today's meals and protein, cheap high-protein ideas |
+| gym today · gym tomorrow · water · steps | the split and exercises, today's numbers |
+| tasks · how was my mood · weekly review · tell me a joke | from tasks, journal and day logs |
+
+Journal from chat: `mood 4`, `energy 2`, `win: got the call`, `struggle: no sleep`, `note: …`, `tomorrow: gym early`.
+Feelings ("i'm so tired", "feeling great") get a kind reply and a nudge to log your mood. Serious messages get a helpline.
+
+**Teaching her:** `unknowns` lists recent messages she didn't understand; `teach money what is the damage bebe` adds that phrase to "money"; `intents` lists everything she knows. Taught phrases are saved in MongoDB.
+
 ## Optional: Moira with Gemini (free chat)
-With this on, anything the commands above don't understand ("my landlord is driving me crazy", "can I afford a movie this weekend?", "treated rahul to lunch, 300 gone") goes to Google Gemini. It replies in Moira's voice using your real numbers (today's limit, week, weekend fund, last 7 days, water, steps, tasks), remembers the last 6 back-and-forths, and can log expenses, water, steps, tasks and rent/bills paid from normal sentences. Commands like `lunch 300` or `today` still use the free rules and never call Gemini.
+With this on, sentences of 4+ words that neither the commands nor her own brain understand ("my landlord is driving me crazy", "should I quit my job", "treated rahul to lunch, 300 gone") go to Google Gemini. It replies in Moira's voice using your real numbers (today's limit, week, weekend fund, last 7 days, water, steps, tasks), remembers the last 6 back-and-forths, and can log expenses, water, steps, tasks and rent/bills paid from normal sentences. Commands like `lunch 300` or `today` still use the free rules and never call Gemini.
 
 1. Get a key at **aistudio.google.com** → Get API key.
-2. In **Render → Environment** add `GEMINI_API_KEY`. Optional: `GEMINI_MODEL` (default `gemini-3.8-flash`) and `MOIRA_AI_DAILY_LIMIT` (default 60 replies a day).
+2. In **Render → Environment** add `GEMINI_API_KEY`. Optional: `GEMINI_MODEL` (default `gemini-3.8-flash`) and `MOIRA_AI_DAILY_LIMIT` (default 30 replies a day).
 3. Redeploy. The log shows `Moira AI on (...)`. Remove the key to go back to rules only.
 
 If Gemini is down, slow, blocked, or the daily limit is reached, Moira answers with her normal rule-based line instead. If replies stop and the log shows a 404, Google has retired that model id: set `GEMINI_MODEL` to a current one from aistudio.google.com.

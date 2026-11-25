@@ -7,7 +7,7 @@
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
-    "test:bot": "tsx tests/bot-commands.ts && tsx tests/bot-webhooks.ts && tsx tests/bot-ai.ts && tsx tests/bot-gemini.ts"
+    "test:bot": "tsx tests/bot-commands.ts && tsx tests/bot-webhooks.ts && tsx tests/bot-ai.ts && tsx tests/bot-gemini.ts && tsx tests/bot-brain.ts"
   },
   "dependencies": {
     "cors": "^2.8.6",

@@ -129,3 +129,22 @@ for (const m of [
   }
   console.log('\nall option-1 checks passed')
 }
+
+// ---------- before salary: Moira says you're broke, never quotes a made-up daily plan ----------
+{
+  const at = new Date(2026, 10, 25, 12, 32)
+  let s = hydrate(null) // no salary entered
+  let failed = 0
+  for (const msg of ['how much money i have ?', 'how much money do i have left', 'budget', 'today', 'auto 40', 'can i afford a movie for 400', 'am i broke']) {
+    const r = runCommand(s, msg, at)
+    s = r.state
+    const ok = r.reply.includes('No salary until') && !/plan is|\/day|left today/i.test(r.reply)
+    if (!ok) failed++
+    console.log(`${ok ? 'ok  ' : 'FAIL'} ${msg.padEnd(32)} broke reply, no plan${ok ? '' : `\n     got: ${r.reply.replace(/\n/g, ' | ')}`}`)
+  }
+  if (failed) {
+    console.error(`\n${failed} pre-salary check(s) failed`)
+    process.exit(1)
+  }
+  console.log('\nall pre-salary checks passed')
+}

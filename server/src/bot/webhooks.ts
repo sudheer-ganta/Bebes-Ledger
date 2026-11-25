@@ -23,7 +23,7 @@ export interface BotDeps {
   saveMemory?: (m: BotMemory) => Promise<void>
   /** Gemini-backed Moira for messages the rules don't understand; off when not set */
   askMoira?: MoiraAi
-  /** most Gemini replies per day (protects the API bill); default 60 */
+  /** most Gemini replies per day (protects the API bill); default 30 */
   aiDailyLimit?: number
 }
 
@@ -59,7 +59,9 @@ export function handleText(text: string, deps: BotDeps): Promise<string> {
     // the rules didn't understand: let Gemini answer, within today's cap; on any error keep the rule reply
     const day = toISO(now)
     const used = mem.ai?.day === day ? mem.ai.count : 0
-    if (result.fallback && deps.askMoira && used < (deps.aiDailyLimit ?? 60)) {
+    // only real sentences (4+ words) our own brain could not place; "hmm" or "ok la" never costs anything
+    const worthAsking = text.trim().split(/\s+/).length >= 4
+    if (result.fallback && worthAsking && deps.askMoira && used < (deps.aiDailyLimit ?? 30)) {
       try {
         const ai = await deps.askMoira(state, text, now, history)
         mem.ai = { day, count: used + 1 }

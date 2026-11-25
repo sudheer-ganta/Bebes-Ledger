@@ -7,7 +7,7 @@ import { addDays, toISO } from '../../../client/src/lib/date'
 import { dayStats } from '../../../client/src/lib/day'
 import { computeFinance } from '../../../client/src/lib/finance'
 import { fmt, litres, num } from '../../../client/src/lib/util'
-import { factsFor, guessCategory, moneyToday } from './commands'
+import { brokeStatus, factsFor, guessCategory, moneyToday } from './commands'
 
 export interface ChatTurn {
   role: 'user' | 'assistant'
@@ -89,6 +89,7 @@ export function runTool(state: AppState, name: string, input: unknown, now: Date
   const i = (input ?? {}) as Record<string, unknown>
   const after = (s: AppState) => {
     const m = moneyToday(s, today)
+    if (m.fv.pending) return `${brokeStatus(s, today).replace(/^💸 /, '')} (no budget until salary)`
     return m.left >= 0 ? `Left today: ${fmt(m.left)} of ${fmt(m.limit)}.` : `Now over today's limit by ${fmt(-m.left)}.`
   }
   switch (name) {
