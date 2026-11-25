@@ -41,7 +41,7 @@ if (bots.whatsapp || bots.telegram) {
         { upsert: true },
       )
     },
-    ...(ai ? { askMoira: makeMoiraAi(ai), aiDailyLimit: ai.dailyLimit } : {}),
+    ...(ai ? { askMoira: makeMoiraAi(ai), aiDailyLimit: ai.dailyLimit, geminiKey: ai.apiKey } : {}),
     ...makeSenders(bots),
     humanPause: true, // short "typing…" pause before each reply
   }))

@@ -25,6 +25,8 @@ export interface BotDeps {
   askMoira?: MoiraAi
   /** most Gemini replies per day (protects the API bill); default 30 */
   aiDailyLimit?: number
+  /** API key for Gemini (used for voice note transcription and AI chat) */
+  geminiKey?: string
   /** show "typing…" (WhatsApp also marks the message read: blue ticks); optional, failures ignored */
   typingWhatsApp?: (messageId: string) => Promise<void>
   typingTelegram?: (chatId: string) => Promise<void>
@@ -120,6 +122,54 @@ function validSignature(req: Request, secret: string): boolean {
   return got.length === expected.length && crypto.timingSafeEqual(Buffer.from(got), Buffer.from(expected))
 }
 
+async function transcribeWhatsAppAudio(mediaId: string, apiVersion: string, waToken: string, geminiKey: string): Promise<string> {
+  const metaRes = await fetch(`https://graph.facebook.com/${apiVersion}/${mediaId}`, {
+    headers: { Authorization: `Bearer ${waToken}` },
+  })
+  if (!metaRes.ok) throw new Error(`Meta media metadata error: ${metaRes.status}`)
+  const metaJson = (await metaRes.json()) as { url: string; mime_type?: string }
+
+  const fileRes = await fetch(metaJson.url, {
+    headers: { Authorization: `Bearer ${waToken}` },
+  })
+  if (!fileRes.ok) throw new Error(`Meta media download error: ${fileRes.status}`)
+  const buf = await fileRes.arrayBuffer()
+  const base64Audio = Buffer.from(buf).toString('base64')
+  const mimeType = metaJson.mime_type || 'audio/ogg'
+
+  const geminiRes = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [
+          {
+            parts: [
+              {
+                inlineData: {
+                  mimeType,
+                  data: base64Audio,
+                },
+              },
+              {
+                text: 'Transcribe this voice message verbatim into English or Hinglish. If the speaker mentions expenses, numbers, food, water, steps, or gym, capture the exact items and numbers. Return ONLY the transcribed text, without any explanations or quotes.',
+              },
+            ],
+          },
+        ],
+      }),
+    }
+  )
+
+  if (!geminiRes.ok) {
+    throw new Error(`Gemini transcription error: ${geminiRes.status} ${await geminiRes.text()}`)
+  }
+  const resJson = (await geminiRes.json()) as any
+  const text = resJson.candidates?.[0]?.content?.parts?.[0]?.text?.trim()
+  return text || ''
+}
+
 export const botDiagnostics = {
   lastIncoming: null as any,
   lastOutgoing: null as any,
@@ -157,7 +207,7 @@ export function botRouter(cfg: BotConfig, deps: BotDeps): Router {
       res.sendStatus(200) // answer fast; Meta retries if we are slow
       const messages =
         (req.body?.entry ?? []).flatMap((e: any) => (e.changes ?? []).flatMap((c: any) => c.value?.messages ?? [])) as Array<{
-          id: string; from: string; type: string; text?: { body: string }
+          id: string; from: string; type: string; text?: { body: string }; audio?: { id: string; mime_type?: string }
         }>
       botDiagnostics.lastIncoming = {
         at: new Date().toISOString(),
@@ -170,9 +220,33 @@ export function botRouter(cfg: BotConfig, deps: BotDeps): Router {
         if (!remember(m.id)) continue
         if (!wa.allowed.includes(digits(m.from))) continue // silently ignore everyone except you
         const send = (reply: string) => deps.sendWhatsApp(m.from, reply)
-        const work = m.type === 'text' && m.text?.body
-          ? replyLikeAPerson(m.text.body, deps, () => deps.typingWhatsApp?.(m.id), send)
-          : send('I only understand text messages for now. Send "help" to see what I can do.')
+        let work: Promise<void>
+        if (m.type === 'text' && m.text?.body) {
+          work = replyLikeAPerson(m.text.body, deps, () => deps.typingWhatsApp?.(m.id), send)
+        } else if (m.type === 'audio' && m.audio?.id) {
+          if (!deps.geminiKey) {
+            work = send(`Darling, I received your voice note, but my ear trumpets are indisposed! To enable voice transcription, add GEMINI_API_KEY to your Render environment variables. Send text for now!`)
+          } else {
+            work = (async () => {
+              try {
+                await deps.typingWhatsApp?.(m.id)
+                const transcribed = await transcribeWhatsAppAudio(m.audio!.id, wa.apiVersion, wa.token, deps.geminiKey!)
+                if (!transcribed) {
+                  await send(`I heard only the tragic acoustics of your room, darling! Speak up or text me.`)
+                  return
+                }
+                await replyLikeAPerson(transcribed, deps, () => deps.typingWhatsApp?.(m.id), async (reply) => {
+                  await send(`🎙️ "${transcribed}"\n\n${reply}`)
+                })
+              } catch (e) {
+                console.error('Audio transcription failed', e)
+                await send(`My ears deceive me! I could not decipher that recording. Speak plainly or text me!`)
+              }
+            })()
+          }
+        } else {
+          work = send('I only understand text messages and voice notes for now. Send "help" to see what I can do.')
+        }
         work.catch((e) => console.error('whatsapp bot error', e))
       }
     })
