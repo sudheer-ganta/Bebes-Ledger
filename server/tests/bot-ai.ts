@@ -83,6 +83,60 @@ check(!paid.error && Object.values(paid.state.paid).some(Boolean), 'mark_paid re
 const cat = runTool(stored, 'log_expense', { amount: 80, title: 'auto to office', category: 'auto' }, now)
 check(cat.state.expenses.at(-1)!.category === 'Rides', '"auto" category is guessed from the title')
 
+const up = runTool(stored, 'add_steps', { steps: 6065 }, now).state
+const fixed = runTool(up, 'set_steps', { total: 5000 }, now)
+check(!fixed.error && fixed.result.includes('5,000'), 'set_steps can lower the step count', fixed.result)
+check(runTool(stored, 'set_steps', { total: -1 }, now).error === true, 'negative step total rejected')
+
+// new tools: corrections, the walk, ticking tasks
+const w = runTool(stored, 'set_water', { total_ml: 1500 }, now)
+check(!w.error && w.result.includes('1.5 L'), 'set_water sets the total', w.result)
+const walk = runTool(stored, 'log_walk', {}, now)
+check(!walk.error && Object.values(walk.state.dayLogs).some((d) => d.habits?.walk) && walk.result.includes('walk marked done'), 'log_walk ticks the walk', walk.result)
+check(runTool(walk.state, 'log_walk', {}, now).result.includes('already'), 'log_walk twice does not untick it')
+const withTask = runCommand(stored, 'task buy soap', now).state
+const open = factsFor(withTask, now).split('\n').find((l) => l.startsWith('Open tasks'))!
+const soapNo = Number(/(\d+)\. buy soap/.exec(open)?.[1])
+const ticked = runTool(withTask, 'complete_task', { number: soapNo }, now)
+check(!ticked.error && ticked.state.tasks.find((t) => t.title === 'buy soap')?.done === true, 'complete_task ticks the numbered task from the facts', ticked.result)
+check(runTool(withTask, 'complete_task', { number: 99 }, now).error === true, 'complete_task with a bad number errors')
+
+// fixing one expense by name, and replacing a wrong meal
+const rides = runCommand(stored, 'rapido 117 and uber 112', now).state
+const fixed1 = runTool(rides, 'fix_expense', { title_words: 'rapido', new_amount: 107 }, now)
+check(!fixed1.error && fixed1.state.expenses.find((e) => e.title === 'rapido')?.amount === 107, 'fix_expense changes the amount', fixed1.result)
+const gone = runTool(rides, 'fix_expense', { title_words: 'uber', new_amount: 0 }, now)
+check(!gone.error && !gone.state.expenses.some((e) => e.title === 'uber') && gone.state.expenses.some((e) => e.title === 'rapido'), 'fix_expense with 0 deletes only that one', gone.result)
+check(runTool(rides, 'fix_expense', { title_words: 'ola', new_amount: 50 }, now).error === true, 'fix_expense with no match errors')
+const meal = runCommand(stored, 'ate biryani 250', now).state
+const um = runTool(meal, 'undo_meal', {}, now)
+check(!um.error && um.state.meals.length === meal.meals.length - 1 && um.state.expenses.length === meal.expenses.length - 1, 'undo_meal removes the meal and its cost', um.result)
+
+// a short answer to her question ("it yes") goes to Gemini with the chat; the same words out of the blue don't
+{
+  const n0b = calls.length
+  memory = { ...(memory as BotMemory), history: [{ role: 'user', text: 'if i took 500 yesterday should it be debt' }, { role: 'assistant', text: 'Is this ₹500 fresh borrowing, bébé?' }] }
+  reply = await handleText('it yes', deps())
+  check(calls.length === n0b + 1, '"it yes" right after her question goes to Gemini', reply)
+  memory = { ...(memory as BotMemory), history: [{ role: 'user', text: 'hi' }, { role: 'assistant', text: 'Evening, darling.' }] }
+  await handleText('it yes', deps())
+  check(calls.length === n0b + 1, '"it yes" with no question before it stays with the rules')
+}
+
+// short messages the rules only guessed at go to Gemini too; real commands still don't
+const n1 = calls.length
+reply = await handleText('done sir', deps())
+check(calls.length === n1 + 1 && reply === 'AI: darling.', '"done sir" (2 words, unsure) goes to Gemini', reply)
+reply = await handleText('ate maggi', deps())
+check(calls.length === n1 + 2, '"ate maggi" (unknown food) goes to Gemini for a protein estimate')
+reply = await handleText('remove 1000 steps', deps())
+check(calls.length === n1 + 2 && reply.includes('Steps'), '"remove 1000 steps" is exact: rules handle it, no Gemini call', reply)
+fakeFails = true
+const beforeMeals = stored.meals.length
+reply = await handleText('ate poha upma', deps())
+check(stored.meals.length === beforeMeals + 1 && reply.includes('🍽️'), "Gemini down: the rules' meal log is kept", reply)
+fakeFails = false
+
 if (failed) {
   console.error(`\n${failed} AI check(s) failed`)
   process.exit(1)

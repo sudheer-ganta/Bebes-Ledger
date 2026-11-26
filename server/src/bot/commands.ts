@@ -9,6 +9,7 @@ import { deriveAutoTasks } from '../../../client/src/lib/smart'
 import { fmt, litres, num } from '../../../client/src/lib/util'
 import { answer, classify, CONFIDENT, INTENTS, train } from './brain'
 import { CRISIS_MEALS, DAY_FOCUS, DAY_KEYS, DEFAULT_GYM_PLAN, GROCERY_WEEKS } from '../../../client/src/lib/defaults'
+import { estimateProtein, isRequest, mealTitle, nearly, normalise, parseAmount, parseStepsFix, parseWaterFix, POLITE, UNITS, unknownFoods } from './parse'
 
 export interface BotResult {
   state: AppState
@@ -16,6 +17,8 @@ export interface BotResult {
   changed: boolean
   /** true when the rules didn't really understand the message (Gemini may answer instead) */
   fallback?: boolean
+  /** the rules answered, but only as a guess: let Gemini (if on) answer instead, however short the message */
+  unsure?: boolean
 }
 
 const pick = (arr: string[]): string => arr[Math.floor(Math.random() * arr.length)]
@@ -54,20 +57,13 @@ export const HELP = [
 const CATEGORY_WORDS: Array<[ExpenseCategory, RegExp]> = [
   ['Rides', /\b(auto|ola|uber|rapido|metro|bus|cab|bike|petrol|ride|taxi|train)\b/],
   ['Movies/Dates', /\b(movie|movies|cinema|pvr|date|gift|party|show|concert|drinks|pub)\b/],
-  ['Outside Food', /\b(chai|tea|coffee|snack|snacks|lunch|dinner|breakfast|biryani|food|swiggy|zomato|restaurant|ordered|juice|dosa|idli|meal|mess)\b/],
+  ['Outside Food', /\b(chai|tea|coffee|snack|snacks|lunch|dinner|breakfast|biryani|food|swiggy|zomato|restaurant|ordered|juice|dosa|idli|meal|mess|cafe|starbucks|ccd|kfc|mcd|mcdonalds|dominos|pizza|burger|maggi|momos|samosa|thali|canteen)\b/],
   ['Groceries', /\b(veg|veggies|vegetables?|grocery|groceries|eggs?|tray|milk|fruits?|apples?|bananas?|oranges?|guavas?|papaya|grapes|mangoe?s?|pomegranates?|watermelon|kiwis?|pears?|rice|atta|dal|paneer|chicken|fish|curd|bread|oats|peanuts?|almonds?|cashews?|nuts|seeds|raisins|soya|kirana|bigbasket|blinkit|zepto|instamart|dmart)\b/],
 ]
 const TAGS: Record<string, ExpenseCategory> = {
   groceries: 'Groceries', grocery: 'Groceries', food: 'Outside Food', outside: 'Outside Food',
   movies: 'Movies/Dates', movie: 'Movies/Dates', date: 'Movies/Dates', dates: 'Movies/Dates',
   rides: 'Rides', ride: 'Rides', personal: 'Personal', emergency: 'Emergency',
-}
-
-function parseAmount(tok: string): number | null {
-  const m = /^(?:₹|rs\.?|inr)?\s*(\d[\d,]*(?:\.\d+)?)\s*(k)?$/i.exec(tok.trim())
-  if (!m) return null
-  const n = Number(m[1].replace(/,/g, '')) * (m[2] ? 1000 : 1)
-  return Number.isFinite(n) && n > 0 ? n : null
 }
 
 export const guessCategory = (text: string): ExpenseCategory => {
@@ -115,6 +111,8 @@ export interface BotMemory {
   learned?: Array<{ phrase: string; intent: string }>
   /** recent messages nobody understood, so you can teach them */
   unknown?: string[]
+  /** cash in hand you told her about ("i have 400 in wallet"); spending logged after `at` comes off it */
+  wallet?: { amount: number; at: string; base?: number }
 }
 export const emptyMemory = (): BotMemory => ({ picks: {}, morning: { count: 0, at: 0 } })
 
@@ -136,12 +134,11 @@ function pickNoRepeat(key: string, arr: string[]): string {
 const hasWord = (text: string, ...words: string[]): boolean =>
   words.some((w) => new RegExp(`(?:^|[^\\p{L}\\p{N}])${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:$|[^\\p{L}\\p{N}])`, 'iu').test(text))
 
-const UNITS = new Set(['g', 'gm', 'gms', 'gram', 'grams', 'kg', 'kgs', 'ml', 'l', 'ltr', 'litre', 'litres', 'liter', 'pc', 'pcs', 'dozen', 'packet', 'packets', 'x'])
 /** Words that mean the message is about steps/protein, not money ("i walked 5000 steps"). */
 const NOT_MONEY = /\b(steps?|paces|protein)\b/i
 
 /** Auto tasks first, then yours: the order the "tasks" list shows and "done 2" counts in. */
-const openTasks = (s: AppState, fv: ReturnType<typeof computeFinance>, now: Date) =>
+export const openTasks = (s: AppState, fv: ReturnType<typeof computeFinance>, now: Date) =>
   [...deriveAutoTasks(s, fv, now), ...s.tasks].filter((t) => !t.done)
 
 const spendToday = (s: AppState, date: string): number =>
@@ -184,7 +181,54 @@ export function brokeStatus(s: AppState, today: string): string {
   const when = fv.waitingFirst
     ? `No salary until ${fmtDate(c.nextPayday, { weekday: 'short', day: 'numeric', month: 'short' })} (${c.daysToPayday} day${c.daysToPayday === 1 ? '' : 's'})`
     : `Salary day was ${fmtDate(c.start, { day: 'numeric', month: 'short' })}; send "salary <amount>" once it's credited`
-  return `💸 ${when}. Spent today ${fmt(spent)}${since > spent ? ` · ${fmt(since)} since the last payday` : ''}.`
+  const w = walletLeft(s)
+  const cash = w ? `\n👛 Cash in hand: ${fmt(w.left)}${fv.waitingFirst && c.daysToPayday > 0 ? ` (≈ ${fmt(Math.max(0, w.left) / c.daysToPayday)}/day till payday)` : ''}` : ''
+  return `💸 ${when}. Spent today ${fmt(spent)}${since > spent ? ` · ${fmt(since)} since the last payday` : ''}.${cash}`
+}
+
+// ---------------------------------------------------------------- cash in hand and money you owe
+
+/** Cash left: what you said you had, minus what you've logged since (borrowing and repaying adjust the base). */
+// everything spent from your own pocket so far; cash left = what you said − (this now − this when you said it)
+const pocketSpent = (s: AppState) => s.expenses.filter((e) => e.fundedBy !== 'savings').reduce((a, e) => a + e.amount, 0)
+export function walletLeft(s: AppState): { left: number; amount: number; at: string } | null {
+  const w = mem.wallet
+  if (!w) return null
+  return { left: w.amount - Math.max(0, pocketSpent(s) - (w.base ?? 0)), amount: w.amount, at: w.at }
+}
+export function setWallet(amount: number, now: Date, s: AppState) {
+  mem.wallet = { amount: Math.round(amount), at: now.toISOString(), base: pocketSpent(s) }
+}
+const adjustWallet = (delta: number) => {
+  if (mem.wallet) mem.wallet = { ...mem.wallet, amount: mem.wallet.amount + Math.round(delta) }
+}
+
+/** Borrowed money: it adds to what you owe (and to your cash), with a reminder to repay by payday. */
+export function borrow(s: AppState, amount: number, from: string, today: string, now: Date): AppState {
+  const fv = computeFinance(s, today)
+  let next = A.patchState({ finance: { ...s.finance, debtTotal: s.finance.debtTotal + Math.round(amount) } })(s)
+  next = A.addTask({ title: `repay ${fmt(amount)} to ${from}`, category: 'finance', priority: 'high', due: fv.cycle.nextPayday > today ? fv.cycle.nextPayday : today })(next)
+  adjustWallet(amount)
+  void now
+  return next
+}
+
+/** Paying someone back: a debt payment (not new spending), and the matching "repay" reminder is ticked. */
+export function repay(s: AppState, amount: number, to: string, today: string): AppState {
+  let next = A.logDebtPayment(amount, today, to ? `repaid ${to}` : 'repaid')(s)
+  const task = s.tasks.find((t) => !t.done && /^repay\b/i.test(t.title) && (!to || t.title.toLowerCase().includes(to)))
+    ?? s.tasks.find((t) => !t.done && /^repay\b/i.test(t.title) && t.title.includes(fmt(amount)))
+  if (task) next = A.toggleTask(task.id)(next)
+  adjustWallet(-amount)
+  return next
+}
+
+/** "from my frnd" → "friend", "from rahul" → "rahul" */
+function lenderOf(norm: string): string {
+  const m = /\bfrom\s+(?:my\s+|a\s+|the\s+)?([a-z]+)/.exec(norm) ?? /\b([a-z]+)\s+(?:gave|lent|sent)\s+me\b/.exec(norm) ?? /\b(?:to|owe)\s+(?:my\s+)?([a-z]+)/.exec(norm)
+  const w = m?.[1] ?? ''
+  if (!w || /^(him|her|them|someone|somebody|debt|loan|it|yesterday|today)$/.test(w)) return 'friend'
+  return /^(frnd|frnds|friend|friends|dost|bro|bhai)$/.test(w) ? 'friend' : w
 }
 
 const partOfDay = (h: number) => (h < 5 ? 'late' : h < 12 ? 'morning' : h < 17 ? 'afternoon' : h < 22 ? 'evening' : 'late')
@@ -276,6 +320,8 @@ export function factsFor(s: AppState, now: Date): string {
     `Spending, last 7 days: ${week.join(', ')}`,
     `Water ${litres(st.waterMl)} of ${litres(st.waterTarget)} · Steps ${num(st.steps)} of ${num(st.stepTarget)} · 60-min walk ${walked ? 'done' : 'not done'} · Protein ${st.proteinG} of ${s.targets.proteinG} g`,
     `Debt left: ${fmt(fv.debt.remaining)} · Rent ${fv.pending ? 'n/a' : s.paid[`${fv.cycle.key}:rent`] ? 'paid' : 'not paid'} this cycle`,
+    (() => { const p = s.tasks.filter((t) => !t.done && /^repay\b/i.test(t.title)).map((t) => t.title); return p.length ? `Borrowed from people (part of the debt): ${p.join('; ')}` : '' })(),
+    (() => { const w = walletLeft(s); return w ? `Cash in hand: ${fmt(w.left)}${fv.pending ? ` for ${fv.cycle.daysToPayday} days until salary (about ${fmt(Math.max(0, w.left) / Math.max(1, fv.cycle.daysToPayday))}/day)` : ''}` : 'Cash in hand: not told' })(),
     `Open tasks: ${open.length ? open.map((t, i) => `${i + 1}. ${t.title}`).join('; ') : 'none'}`,
   ].filter(Boolean).join('\n')
 }
@@ -290,9 +336,22 @@ function dayExpenses(s: AppState, date: string, label: string, name: string): st
 }
 
 /** Words that carry no meaning in an expense title: "gave 300 to rahul for lunch" → "rahul lunch". */
-const FILLER = new Set(['i', 'just', 'to', 'for', 'on', 'at', 'the', 'a', 'an', 'my', 'of', 'rs', 'rs.', 'rupees', 'inr', '₹', 'today', 'spent', 'spend', 'paid', 'pay', 'gave', 'give', 'bought', 'buy', 'ordered', 'order', 'cost', 'costs', 'was', 'it'])
+const FILLER = new Set(['i', 'just', 'to', 'for', 'on', 'at', 'the', 'a', 'an', 'my', 'of', 'rs', 'rs.', 'rupees', 'inr', '₹', 'today', 'spent', 'spend', 'paid', 'pay', 'gave', 'give', 'bought', 'buy', 'ordered', 'order', 'cost', 'costs', 'was', 'it', 'done', 'got', 'did'])
 const MONEY_VERB = /\b(gave|give|spent|spend|paid|pay|bought|buy|ordered|cost|costs)\b|₹|\brs\.?\s*\d|\brupees\b/i
-const QUESTION = /\?\s*$|^(can|could|should|shall|will|would|how|what|why|is|am|do|did)\b/i
+const QUESTION = /\?\s*$|^[^?]*\s[^?]*\s[^?]*\s[^?]*\s[^?]*\s[^?]*\s[^?]*\s[^?]*\?|^(can|could|should|shall|will|would|how|what|why|is|am|do|did)\b/i
+
+/** "auto 40 chai 20" → "auto 40, chai 20": a word-then-price pattern repeated without commas. */
+function splitPairs(text: string): string {
+  if (/[,;&+]|\band\b/i.test(text)) return text
+  const toks = text.split(' ')
+  const priceAt = toks.map((t, i) => (parseAmount(t) !== null && !UNITS.has((toks[i + 1] ?? '').toLowerCase()) ? i : -1)).filter((i) => i >= 0)
+  if (priceAt.length < 2) return text
+  // words first ("auto 40 chai 20"): cut after each price; prices first ("40 auto 20 chai"): cut before each price
+  const wordsFirst = priceAt[0] > 0
+  if (wordsFirst && priceAt.at(-1) !== toks.length - 1) return text
+  if (priceAt.some((p, k) => k > 0 && p - priceAt[k - 1] < 2)) return text
+  return toks.map((t, i) => (wordsFirst ? (priceAt.includes(i) && i < toks.length - 1 ? `${t},` : t) : (priceAt.includes(i) && i > 0 ? `, ${t}` : t))).join(' ').replace(/ ,/g, ',')
+}
 
 function moiraScoldOverspend(name: string, over: number): string {
   const quotes = [
@@ -564,6 +623,49 @@ function handle(state: AppState, input: string, now: Date): BotResult {
     return noChange(`🧠 Learned: "${p}" means ${key}. I am, as ever, a quick study.`)
   }
 
+  // ---- several kinds of thing in one message: "drank 500ml and walked 2000 steps", "spent 200 on lunch and walked 4000 steps"
+  // each part goes through on its own; parts of one kind stay together ("ate 2 rotis and dal" is one meal)
+  {
+    const kindOf = (p: string): string | null => {
+      const n = normalise(p)
+      if (parseStepsFix(n)) return 'steps'
+      if (parseWaterFix(n)) return 'water'
+      if (/^(i\s+)?(just\s+)?(ate|had|eaten|khaya|eat)\b|^(for\s+)?(breakfast|lunch|dinner|snack)\b.*\b(had|ate)\b/.test(n) && !/\d{2,}\s*(rs|₹)?$/.test(n)) return 'meal'
+      // a price needs something it was paid for ("its 4000" is the end of a correction, not ₹4,000)
+      const hasThing = n.split(/\s+/).some((w) => /^[a-z]{3,}$/.test(w) && !['its', 'not', 'only', 'actually', 'was', 'the', 'for', 'and'].includes(w))
+      if (/\b(spent|paid|bought|gave|ordered)\b|₹|\brs\b|\d\s*rs\b/.test(n) || (hasThing && /(^|\s)\d{2,}[\d,]*(\s|$)/.test(n))) return 'money'
+      return null
+    }
+    // corrections are one thought: "not 6065 steps, its 4000"
+    const isCorrection = /\b(not|actually|wrong|instead|galat|mistake)\b/i.test(text)
+    const pieces = isCorrection ? [] : text.split(/\s*(?:,|;|\band\b|\balso\b|\bthen\b|\bplus\b|&|\+)\s*/i).map((p) => p.trim()).filter(Boolean)
+    if (pieces.length >= 2) {
+      const chunks: Array<{ kind: string | null; text: string }> = []
+      for (const p of pieces) {
+        const k = kindOf(p)
+        const last = chunks.at(-1)
+        // "dal" after "ate 2 rotis", "chai 20" after "auto 40": same kind or no kind of its own joins the previous part
+        if (last && (k === null || k === last.kind)) last.text += (k === 'money' && last.kind === 'money' ? ', ' : ' and ') + p
+        else chunks.push({ kind: k, text: p })
+      }
+      if (chunks.length >= 2 && new Set(chunks.map((c) => c.kind)).size === chunks.length && chunks.every((c) => c.kind)) {
+        let cur = state
+        const replies: string[] = []
+        let ok = true
+        for (const c of chunks) {
+          const r = handle(cur, c.text, now)
+          if (!r.changed) { ok = false; break }
+          cur = r.state
+          replies.push(r.reply.split('\n')[0])
+        }
+        if (ok) {
+          const tail = computeFinance(cur, today).pending || chunks.some((c) => c.kind === 'money') ? `\n${limitLine(cur, now)}` : ''
+          return done(cur, `✨ Got all ${chunks.length}, ${name}:\n${replies.join('\n')}${tail}`)
+        }
+      }
+    }
+  }
+
   // ---- journal: "mood 4", "energy 2", "win: got the call", "struggle: no sleep", "note: ...", "tomorrow: gym early"
   const moodM = /^(mood|energy)\s+([1-5])\b\s*(.*)$/i.exec(text)
   if (moodM) {
@@ -628,7 +730,125 @@ function handle(state: AppState, input: string, now: Date): BotResult {
   }
   mem.morning.count = 0
 
-  if (['today', 'day', 'status', 'balance', 'bal', 'left', 'summary', '/today'].includes(cmd)) return noChange(summary(state, now))
+  // what kind of message this is, decided once (typos fixed first: "remov 1000 stpes")
+  const norm = normalise(lower)
+  const strictQuestion = (text.includes('?') && text.split(/\s+/).length > 8) || !isRequest(norm) && /\?\s*$|^(how|what|when|why|which|can|could|should|shall|will|would|is|am|are|do|does)\b/i.test(norm)
+  const moneyMark = /₹|\brs\.?\s*\d|\d\s*rs\b|\brupees\b|\b(spent|paid|bought|gave|cost|costs)\b/i.test(norm)
+  // plans and wishes are never logged: "thinking of ordering pizza 300", "tomorrow i will buy groceries 500"
+  const isPlan = /\b(want to|wanna|wish|thinking|planning|plan to|i will|i'll|ill buy|gonna|going to|might|maybe|should i|if i|tomorrow i|next week|later i|need to buy|have to buy|i need|need some|lend me)\b/.test(norm)
+  const stepsLine = (before: number, after: ReturnType<typeof dayStats>) =>
+    `${num(before)} → ${num(after.steps)} / ${num(after.stepTarget)}.${after.steps >= after.stepTarget ? ' Target reached. Brava!' : ` ${num(after.stepTarget - after.steps)} to go, ${name}.`}`
+
+  // ---- the 60-min walk in words: "walk done", "did my walk", "gym walk done ✅", "walked to gym and back"
+  if (!strictQuestion && !/\d/.test(norm) && (
+    /\b(did|done|finished|completed|complete|hogaya|ho gaya|ho gya|kar liya|over)\b.*\bwalk\b|\bwalk(ed)?\b.*\b(done|finished|completed|complete|hogaya|ho gaya|ho gya|kar liya|over)\b|\bwalk(ed)?\b.*✅/.test(norm) ||
+    /\bwalked (to|till) (the )?gym\b/.test(norm))) {
+    if (state.dayLogs[today]?.habits?.walk) return noChange(`Your 60-min walk is already recorded, ${name}. Go collapse in deshabille.`)
+    const before = dayStats(state, today).steps
+    const next = A.toggleHabit(today, 'walk')(state)
+    return done(next, `🚶 60-min walk done (+5,500). Steps: ${stepsLine(before, dayStats(next, today))}`)
+  }
+  if (!strictQuestion && !/\d/.test(norm) && /\b(went for|go for|had) (a |my )?walk\b|\bwalking (done|over)\b/.test(norm)) {
+    return { ...noChange(`A walk! Was it the 60-min gym walk, ${name}? Send "walk" for that, or "walked 3000 steps" for anything else.`), unsure: true }
+  }
+
+  // ---- steps and water in plain words, including corrections ("remove 1000 steps", "water is 1.5l actually")
+  // plans and reminders ("task walk 5000 steps", "remind me to drink water", "going to drink more water") are not logged
+  const isTaskLike = /^(task|todo|remind|add task|add todo|note)\b|\bremind me\b/.test(norm)
+  if (!strictQuestion && !isPlan && !isTaskLike && !(moneyMark && !/\b(steps?|water)\b/.test(norm))) {
+    const sf = parseStepsFix(norm)
+    if (sf) {
+      const before = dayStats(state, today)
+      const credit = before.stepCredit
+      if (sf.kind === 'undo') {
+        return { ...noChange(`I don't keep each step entry, ${name}, only the total: ${num(before.steps)}. Tell me the right one, like "steps are 5000" or "remove 1000 steps".`), unsure: true }
+      }
+      const next =
+        sf.kind === 'add' ? A.addSteps(today, sf.n!)(state)
+        : sf.kind === 'clear' ? A.clearSteps(today, state.habits.filter((h) => h.stepCredit).map((h) => h.id))(state)
+        : A.setExtraSteps(today, Math.max(0, (sf.kind === 'set' ? sf.n! : before.steps - sf.n!) - credit))(state)
+      const after = dayStats(next, today)
+      const wanted = sf.kind === 'set' ? sf.n! : sf.kind === 'sub' ? Math.max(0, before.steps - sf.n!) : after.steps
+      const verb = sf.kind === 'add' ? `+${sf.approx ? '~' : ''}${num(sf.n!)}` : sf.kind === 'sub' ? `−${num(sf.n!)}` : sf.kind === 'set' ? 'corrected' : 'reset'
+      const walkNote = wanted < after.steps ? `\n(The 60-min walk alone counts ${num(credit)}; send "reset steps" to clear it too.)` : ''
+      const approxNote = sf.approx ? `\n(Estimated from distance/time at ~1,300 a km. Send "steps are 5000" if your phone says otherwise.)` : ''
+      return done(next, `🚶 Steps ${verb}: ${stepsLine(before.steps, after)}${walkNote}${approxNote}`)
+    }
+    const wf = parseWaterFix(norm)
+    if (wf) {
+      const before = dayStats(state, today)
+      if (wf.kind === 'undo' && !(state.dayLogs[today]?.water ?? []).length) return noChange(`There is no water to undo today, ${name}. Drink some first.`)
+      const next =
+        wf.kind === 'add' ? A.addWater(today, wf.n!, 'Water')(state)
+        : wf.kind === 'undo' ? A.removeLastWater(today)(state)
+        : wf.kind === 'clear' ? A.clearWater(today)(state)
+        : A.setWaterTotal(today, Math.max(0, wf.kind === 'set' ? wf.n! : before.waterMl - wf.n!))(state)
+      const after = dayStats(next, today)
+      const verb = wf.kind === 'add' ? `+${num(wf.n!)} mL` : wf.kind === 'sub' ? `−${num(wf.n!)} mL` : wf.kind === 'undo' ? 'last entry undone' : wf.kind === 'set' ? 'corrected' : 'reset'
+      const approxNote = wf.approx ? ` (I counted a glass, 250 mL. Send "water 500" for the real amount.)` : ''
+      return done(next, `💧 Water ${verb}: ${litres(before.waterMl)} → ${litres(after.waterMl)} / ${litres(after.waterTarget)}.${after.waterMl >= after.waterTarget ? ' Dewy and triumphant.' : ` ${litres(after.waterTarget - after.waterMl)} to go, ${name}.`}${approxNote}`)
+    }
+  }
+
+  // ---- undo a meal: "undo meal", "remove last meal", "delete breakfast"
+  const mealUndo = /^(?:pls |please )?(undo|remove|delete|cancel|erase)\s+(?:the\s+|my\s+|last\s+|today'?s\s+)*(meal|food|breakfast|lunch|dinner|snack|evening snack|pre-workout)(\s+entry)?$/.exec(norm)
+  if (mealUndo) {
+    const slot = mealUndo[2]
+    const todays = state.meals.filter((m) => m.date === today)
+    const target = (['meal', 'food'].includes(slot) ? todays : todays.filter((m) => m.slot.toLowerCase() === slot)).at(-1)
+    if (!target) return noChange(`No ${['meal', 'food'].includes(slot) ? 'meal' : slot} logged today to undo, ${name}.`)
+    const next = A.deleteMeal(target.id)(state)
+    return done(next, `🍽️ Removed ${target.slot}: ${target.title}${target.protein ? ` (${target.protein}g)` : ''}${target.cost ? ` and its ${fmt(target.cost)}` : ''}. Protein today: ${dayStats(next, today).proteinG} / ${next.targets.proteinG} g.`)
+  }
+
+  // ---- protein on its own: "protein 20", "add 20g protein", "20g protein"
+  const proteinOnly = /^(?:add\s+|log\s+|plus\s+|\+)?(?:protein\s+(\d{1,3})\s*g?|(\d{1,3})\s*(?:g|gm|grams?)?\s+(?:of\s+)?protein)$/.exec(norm)
+  if (proteinOnly && !strictQuestion) {
+    const g = Number(proteinOnly[1] ?? proteinOnly[2])
+    const next = A.addMeal({ date: today, slot: slotFor(now.getHours()), title: 'protein', appliances: [], cost: 0, protein: g })(state)
+    return done(next, `🥩 +${g} g protein. Today: ${dayStats(next, today).proteinG} / ${next.targets.proteinG} g.`)
+  }
+
+  // ---- fix or remove one expense by name: "that rapido was 107 not 117", "remove rapido", "delete the uber expense"
+  {
+    const recent = [...state.expenses].filter((e) => e.date >= addDays(today, -7) && (e.source === 'manual' || e.source === 'meal')).reverse()
+    const byName = (q: string, amount?: number) => {
+      const ws = q.split(/\s+/).filter((w) => w.length >= 3 && !['the', 'that', 'this', 'my', 'expense', 'entry', 'one', 'last', 'amount', 'for', 'was', 'not'].includes(w))
+      if (!ws.length) return undefined
+      const hits = recent.filter((e) => ws.some((w) => e.title.toLowerCase().split(/\s+/).some((t) => t === w || nearly(t, w))))
+      return (amount ? hits.find((e) => e.amount === amount) : undefined) ?? hits[0]
+    }
+    const del = /^(?:pls |please )?(?:remove|delete|cancel|erase|undo)\s+(?:the\s+|that\s+|my\s+)?(.+?)(?:\s+(?:expense|entry|one))?$/.exec(norm)
+    if (del && !/^(last|all|everything|expenses?|today|it)$/.test(del[1]) && !/\b(steps?|water|meals?|protein|tasks?|walk|breakfast|lunch|dinner)\b/.test(del[1])) {
+      const amt = del[1].split(/\s+/).map((w) => parseAmount(w)).find((x) => x !== null) ?? undefined
+      const e = byName(del[1], amt)
+      if (e) {
+        const next = A.deleteExpense(e.id)(state)
+        return done(next, `🧾 Removed ${fmt(e.amount)} ${e.title} (${fmtDate(e.date, { day: 'numeric', month: 'short' })}).\n${limitLine(next, now)}`)
+      }
+      // "remove chai" with no chai this week: say so instead of a random quip
+      if (del[1].split(/\s+/).length <= 3 && !/\d/.test(del[1])) {
+        return { ...noChange(`I can't find "${del[1]}" in this week's expenses, ${name}. Send "what did i spend" to see them.`), unsure: true }
+      }
+    }
+    // "rapido was 107 not 117", "that uber is 120", "change rapido to 107", "make uber 120", "fixed: uber 120 not 112"
+    const edit = /^(?:that\s+|the\s+|my\s+)?(?:(?:change|fix|fixed|correct|correction|make|set|update)\s*:?\s+(?:the\s+|my\s+)?)?([a-z][a-z ]*?)\s+(?:was|is|should be|=|to|actually|cost|costs)?\s*(?:₹|rs\.?\s*)?(\d[\d,]*)(?:\s*(?:rs|₹))?(?:\s+(?:not|instead of)\s+(?:₹|rs\.?\s*)?(\d[\d,]*))?(?:\s+(?:only|actually))?$/.exec(norm)
+    const editWords = /^(?:that\s+|the\s+|my\s+)?(change|fix|fixed|correct|correction|make|set|update)\b|\b(was|should be|actually|instead of)\b|\bnot\s+(?:₹|rs\.?\s*)?\d/.test(norm)
+    if (edit && (edit[3] || editWords || /\bis\b/.test(norm)) && !/\b(steps?|water|protein|salary|debt|mood|energy|paces)\b/.test(norm)) {
+      const newAmt = parseAmount(edit[2])
+      const oldAmt = edit[3] ? parseAmount(edit[3]) ?? undefined : undefined
+      const e = byName(edit[1], oldAmt)
+      if (e && newAmt && newAmt !== e.amount) {
+        const next = A.patchState({ expenses: state.expenses.map((x) => (x.id === e.id ? { ...x, amount: Math.round(newAmt) } : x)) })(state)
+        return done(next, `🧾 Fixed: ${e.title} ${fmt(e.amount)} → ${fmt(newAmt)}.\n${limitLine(next, now)}`)
+      }
+      if (e && newAmt === e.amount) return noChange(`${e.title} is already ${fmt(e.amount)}, ${name}.`)
+      // clearly a correction, but of nothing we have: never log it as a new expense
+      if (editWords) return { ...noChange(`I can't find "${edit[1].trim()}" in this week's expenses to fix, ${name}. If it's new, send it like "${edit[1].trim()} ${edit[2]}".`), unsure: true }
+    }
+  }
+
+  if (['today', 'day', 'status', 'balance', 'bal', 'left', 'summary', '/today'].includes(cmd) && restTokens.length <= 1) return noChange(summary(state, now))
   if (['week', 'weekly', '/week'].includes(cmd)) return noChange(weekSummary(state, now))
   if (['month', 'monthly', '/month'].includes(cmd)) return noChange(monthSummary(state, now))
   if (['gym', 'workout', 'exercise', 'split'].includes(cmd) || lower.includes('gym list') || lower.includes('workout list') || lower.includes('gym plan')) {
@@ -641,7 +861,8 @@ function handle(state: AppState, input: string, now: Date): BotResult {
   if (['breakfast', 'lunch', 'dinner', 'snack', 'cook'].includes(cmd) && !restTokens.length) {
     return noChange(mealSuggestions(state, now, cmd))
   }
-  if (['groceries', 'grocery', 'buy', 'shopping', 'weekly buy', 'provisions'].includes(cmd) || lower.includes('what to buy') || lower.includes('weekly groceries')) {
+  // "buy" alone is the list; "buy milk" is a reminder (below)
+  if (['groceries', 'grocery', 'shopping', 'weekly buy', 'provisions'].includes(cmd) || (cmd === 'buy' && !restTokens.length) || lower.includes('what to buy') || lower.includes('weekly groceries')) {
     return noChange(weeklyGroceryList(state, now))
   }
   if (cmd === 'savings' || cmd === 'vault') {
@@ -656,7 +877,9 @@ function handle(state: AppState, input: string, now: Date): BotResult {
     ].join('\n'))
   }
 
-  if (
+  if (/\b(steps?|water|meals?|protein|tasks?|walk|breakfast|lunch|dinner)\b/.test(norm) && !/\b(expenses?|spend|spent|money|₹)\b/.test(norm)) {
+    // "undo steps", "clear water" must never wipe expenses; if we got here we didn't understand it
+  } else if (
     cmd === 'undo' ||
     ['clear', 'reset'].includes(cmd) ||
     lower.includes('clear expenses') ||
@@ -690,35 +913,25 @@ function handle(state: AppState, input: string, now: Date): BotResult {
     return done(next, `Expunged ${fmt(last.amount)} (${last.title}) from the record, ${name}!\n${limitLine(next, now)}`)
   }
 
-  // ---- water
-  if (cmd === 'glass') {
+  // ---- water / steps commands (the plain-word parser above already took anything with a number)
+  if (cmd === 'glass' && !restTokens.length) {
     const next = A.addWater(today, 250, 'Glass')(state)
     const st = dayStats(next, today)
     return done(next, `💧 +250 mL. Guzzle it, ${name}. We can't afford luxury anti-aging creams right now. (${litres(st.waterMl)} / ${litres(st.waterTarget)})`)
   }
-  if (['water', 'w', 'drank', 'drink'].includes(cmd)) {
-    const raw = parseAmount(restTokens[0] ?? '')
-    if (raw === null) {
-      const st = dayStats(state, today)
-      return noChange(`💧 Water: ${litres(st.waterMl)} / ${litres(st.waterTarget)}\nGuzzle more, ${name}! No offspring of mine shall walk the earth looking like a desiccated apricot!`)
-    }
+  if (['water', 'w'].includes(cmd) && !restTokens.length) {
+    const st = dayStats(state, today)
+    return noChange(`💧 Water: ${litres(st.waterMl)} / ${litres(st.waterTarget)}\nGuzzle more, ${name}! No offspring of mine shall walk the earth looking like a desiccated apricot!`)
+  }
+  if (cmd === 'w' && parseAmount(restTokens[0] ?? '') !== null) {
+    const raw = parseAmount(restTokens[0])!
     const ml = raw <= 10 ? raw * 1000 : raw
     const next = A.addWater(today, ml, 'Water')(state)
     const st = dayStats(next, today)
     return done(next, `💧 +${num(ml)} mL logged. Total: ${litres(st.waterMl)} / ${litres(st.waterTarget)}. Try not to look like a sun-dried apricot, ${name}.`)
   }
-
-  // ---- steps / walk
-  if (['steps', 'step', 'walked'].includes(cmd)) {
-    const isSet = restTokens[0]?.toLowerCase() === 'set' || restTokens[0]?.toLowerCase() === 'total'
-    const n = parseAmount(restTokens[isSet ? 1 : 0] ?? '')
-    if (n === null) return noChange(`How many paces did you march, ${name}? Confess!`)
-    const credit = dayStats(state, today).stepCredit
-    const next = isSet ? A.setExtraSteps(today, Math.max(0, n - credit))(state) : A.addSteps(today, n)(state)
-    const st = dayStats(next, today)
-    return done(next, `🚶 ${num(st.steps)} / ${num(st.stepTarget)} paces. A Rose never slouches, ${name}.`)
-  }
-  if (cmd === 'walk') {
+  if (['steps', 'step'].includes(cmd) && !/\d/.test(rest)) return noChange(`How many paces did you march, ${name}? Confess! (Or "steps are 5000" to correct.)`)
+  if (cmd === 'walk' && !restTokens.length) {
     const already = !!(state.dayLogs[today]?.habits ?? {}).walk
     const next = already ? state : A.toggleHabit(today, 'walk')(state)
     const st = dayStats(next, today)
@@ -731,31 +944,58 @@ function handle(state: AppState, input: string, now: Date): BotResult {
       : done(next, pick(walkQuotes))
   }
 
-  // ---- meals
-  if (['ate', 'eat', 'had'].includes(cmd)) {
-    if (!rest) return noChange(`What did you feed yourself, ${name}? And please tell me there was actual protein involved!`)
+  // ---- meals: "ate 3 eggs p20", "i had 2 rotis and dal", "drank a protein shake", "breakfast: oats with milk",
+  // "for lunch i had chicken rice", "had chicken biryani 250", "2 eggs", "whey 1 scoop", "chai and biscuit"
+  const SLOT_WORDS: Record<string, MealSlot> = { breakfast: 'Breakfast', brunch: 'Breakfast', lunch: 'Lunch', dinner: 'Dinner', snack: 'Evening Snack', snacks: 'Evening Snack', 'evening snack': 'Evening Snack', 'pre workout': 'Pre-Workout', 'post workout': 'Evening Snack' }
+  const slotLead = /^(?:for\s+|in\s+|at\s+)?(breakfast|brunch|lunch|dinner|evening snack|snacks?|pre workout|post workout)\s*[:\-]?\s*(?:i\s+)?(?:had|ate|was|khaya)?\s*(.+)$/.exec(norm)
+  const mealM = /^(?:i\s+|i'?ve\s+|ive\s+)?(?:just\s+)?(?:ate|eat|had|have had|have eaten|eaten|drank|drink|khaya|khaye)(?:\s+(.*))?$/.exec(norm)
+  // a price is a plain number of 10+ that isn't a quantity ("biryani 250", not "200g paneer", "2 eggs" or "1 scoop")
+  const hasPrice = (s: string) => moneyMark || s.split(/\s+/).some((w, i, all) => { const n = parseAmount(w); return n !== null && n >= 10 && !/\d(g|gm|ml)$/.test(w) && !UNITS.has(all[i + 1] ?? '') })
+  const knownFoodOnly = (s: string) => estimateProtein(s) > 0 && unknownFoods(s).length === 0
+  const slotMeal = !!slotLead && !hasPrice(slotLead[2]) && (knownFoodOnly(slotLead[2]) || /^(?:for\s+|in\s+|at\s+)?\w+\s*[:\-]?\s*(?:i\s+)?(?:had|ate|khaya)\b/.test(norm))
+  const bareFood = !mealM && !slotLead && !strictQuestion && !isPlan && !hasPrice(norm) && knownFoodOnly(norm) && !/\b(buy|get|order|task|remind)\b/.test(norm)
+  if ((mealM && !isPlan) || slotMeal || bareFood) {
+    const body = (slotMeal ? slotLead![2] : mealM ? (mealM[1] ?? '') : norm).trim()
+    if (!body) return noChange(`What did you feed yourself, ${name}? And please tell me there was actual protein involved!`)
     let protein = 0
     let cost = 0
     const words: string[] = []
-    for (const w of restTokens) {
-      const p = /^p(\d{1,3})$/i.exec(w) ?? /^(\d{1,3})g$/i.exec(w)
-      const c = /^₹(\d+)$/.exec(w)
-      if (p) protein = Number(p[1])
+    const toks = body.split(' ')
+    for (let i = 0; i < toks.length; i++) {
+      const w = toks[i]
+      const p = /^p(\d{1,3})$/i.exec(w) ?? (/^protein$/i.test(toks[i + 1] ?? '') ? /^(\d{1,3})g?$/i.exec(w) : null)
+      const price = parseAmount(w)
+      const c = /^(?:₹|rs\.?)(\d+)$/i.exec(w) ?? (price !== null && price >= 10 && !/\d(g|gm|ml)$/.test(w) && !UNITS.has((toks[i + 1] ?? '').toLowerCase()) ? [w, String(price)] : null)
+      if (p) { protein = Number(p[1]); if (/^protein$/i.test(toks[i + 1] ?? '')) i++ }
       else if (c) cost = Number(c[1])
+      else if (/^(rs\.?|₹|rupees)$/i.test(w)) continue
       else words.push(w)
     }
-    const slot = slotFor(now.getHours())
-    const next = A.addMeal({ date: today, slot, title: words.join(' '), appliances: [], cost, protein })(state)
+    // no "p20" given: estimate from what was eaten, so "ate two eggs" doesn't count as 0 g
+    const estimated = !protein
+    if (estimated) protein = estimateProtein(words.join(' '))
+    const title = mealTitle(words) || words.join(' ') || 'meal'
+    const slot = slotMeal ? SLOT_WORDS[slotLead![1]] : slotFor(now.getHours())
+    const next = A.addMeal({ date: today, slot, title, appliances: [], cost, protein })(state)
     const st = dayStats(next, today)
-    return done(next, `🍽️ ${slot}: ${words.join(' ')}${protein ? ` · ${protein}g protein` : ''}${cost ? ` · ${fmt(cost)} Outside Food` : ''}\nProtein tally: ${st.proteinG} / ${next.targets.proteinG} g. Sustenance for my favorite offspring, ${name}!`)
+    // a food we don't know ("biryani", "maggi"): Gemini can estimate it better, if it's on
+    const unsure = estimated && (protein === 0 || unknownFoods(words.join(' ')).length > 0)
+    const fix = unsure ? `\nNot sure of the protein, darling. Add it like "ate ${title.split(',')[0]} p8".` : ''
+    const reply = `🍽️ ${slot}: ${title}${protein ? ` · ${estimated ? '~' : ''}${protein}g protein` : ''}${cost ? ` · ${fmt(cost)} Outside Food` : ''}\nProtein tally: ${st.proteinG} / ${next.targets.proteinG} g. Sustenance for my favorite offspring, ${name}!${fix}`
+    return { ...done(next, reply), unsure }
   }
 
-  // ---- tasks
-  if (['task', 'todo', 'add', 'remind'].includes(cmd)) {
+  // ---- tasks: "task call mom tomorrow", "remind me to pay electricity bill", "add task buy milk", "buy milk"
+  const remindM = /^(?:pls |please )?(?:remind me (?:to |about |that )?|add (?:a )?(?:task|todo|reminder)(?: to)? |add to (?:my )?(?:list|tasks) |note to self:? |todo:? |task:? )(.+)$/i.exec(text)
+  const buyTask = cmd === 'buy' && restTokens.length > 0 && !/\d/.test(rest) && !isPlan
+  // "add" alone is too common ("add 500 steps", "add 20g protein") to mean a task unless nothing else took it
+  if (remindM || buyTask || ['task', 'todo', 'remind'].includes(cmd) || (cmd === 'add' && !/\d/.test(rest))) {
     let due: string | undefined
     let priority: Priority = 'routine'
     const words: string[] = []
-    for (const w of restTokens) {
+    // "remind me tomorrow to call landlord" → "call landlord" (due tomorrow)
+    const src = (remindM ? remindM[1].split(' ') : buyTask ? text.split(' ') : restTokens).filter((w, i, all) => !(w.toLowerCase() === 'to' && i > 0 && /^(tomorrow|tmrw|tmr|today)$/i.test(all[i - 1])))
+    for (const w of src) {
       const lw = w.toLowerCase()
       if (lw === 'tomorrow' || lw === 'tmrw' || lw === 'tmr') due = addDays(today, 1)
       else if (lw === 'today') due = today
@@ -768,20 +1008,70 @@ function handle(state: AppState, input: string, now: Date): BotResult {
     const next = A.addTask({ title, category, priority, due: due ?? today })(state)
     return done(next, `📜 Enscribed in the registry for ${name}: "${title}" (due ${due && due !== today ? fmtDate(due) : 'today'}${priority === 'high' ? ', urgent!' : ''}) — "I’m positively bedeviled with meetings, et cetera, but we shall conquer this obligation!"`)
   }
-  if (['done', 'finished', 'complete', 'completed', 'tick'].includes(cmd)) {
-    const q = rest.toLowerCase()
-    if (!q) return noChange(`Which chore was vanquished, ${name}? Tell your mother!`)
+  // ---- kitchen ran out: "eggs finished", "milk ran out", "out of oats", "eggs are out of stock", "atta khatam"
+  {
+    const oos = /^(?:no\s+)?(.+?)\s+(?:finished|khatam|khatam ho gaya|over|ran out|run out|is out|are out|is out of stock|are out of stock|out of stock|empty|nahi hai)(?: in (?:the )?kitchen| at home)?[.!]*$|^(?:out of|no more|ran out of|run out of)\s+(.+?)[.!]*$|^no\s+(.+?)\s+(?:left|at home|in (?:the )?kitchen|in (?:the )?fridge)[.!]*$/.exec(norm)
+    const what = oos ? (oos[1] ?? oos[2] ?? oos[3]).replace(/^(the|my|all)\s+/, '') : ''
+    const fvT = computeFinance(state, today)
+    const isTask = what && openTasks(state, fvT, now).some((t) => t.title.toLowerCase().includes(what))
+    if (oos && !isTask && !/\d/.test(norm)) {
+      const items = GROCERY_WEEKS.flatMap((w) => w.items)
+      const words = what.split(/[\s,&]+|\band\b/).map((w) => w.trim()).filter((w) => w.length >= 3)
+      const hits = [...new Map(items.filter((i) => words.some((w) => i.name.toLowerCase().split(/[^a-z]+/).some((n) => n === w || n === w.replace(/s$/, '') || nearly(n, w)))).map((i) => [i.name, i])).values()]
+      if (hits.length) {
+        let next = state
+        for (const i of hits) next = A.setOutOfStock(i.id, true)(next)
+        return done(next, `🧺 Marked out of stock: ${hits.map((i) => i.name).join(', ')}. It's on the restock list, ${name}. Send "what ran out" to see it.`)
+      }
+      // not on the grocery plan ("out of oats"): a reminder to buy it instead
+      if (words.length && words.length <= 3 && !/\b(money|cash|time|patience|battery|data|balance|budget)\b/.test(what)) {
+        const next = A.addTask({ title: `buy ${what}`, category: 'errands', priority: 'routine', due: today })(state)
+        return done(next, `🧺 ${what[0].toUpperCase() + what.slice(1)} isn't on my grocery plan, so I added a reminder: "buy ${what}".`)
+      }
+    }
+  }
+
+  // "done soap", "soap done", "finished buying soap", "bought the soap ✅"
+  const doneTail = /^(.+?)\s+(?:done|finished|completed|complete|hogaya|ho gaya|ho gya|✅)\s*[.!✅]*$/.exec(text)
+  if (['done', 'finished', 'complete', 'completed', 'tick', 'bought', 'did'].includes(cmd) && !(cmd === 'bought' && /\d/.test(rest)) || (doneTail && !/\d/.test(text))) {
+    // "done sir", "done ma ✅", "done bro": the polite bits are not a task name
+    const q = (doneTail && !['done', 'finished', 'complete', 'completed', 'tick'].includes(cmd) ? doneTail[1] : rest)
+      .toLowerCase().replace(/[^\p{L}\p{N}#\s]/gu, ' ').split(/\s+/).filter((w) => w && !POLITE.has(w)).join(' ')
     // same list, same order as the "tasks" reply, so "done 2" means item 2 there
     const fv = computeFinance(state, today)
     const open = openTasks(state, fv, now)
+    // "done the walk": the walk habit, not a task
+    if (/\bwalk(ed|ing)?\b/.test(q) && !open.some((x) => x.title.toLowerCase().includes(q))) {
+      if (state.dayLogs[today]?.habits?.walk) return noChange(`Your 60-min walk is already recorded, ${name}.`)
+      const next = A.toggleHabit(today, 'walk')(state)
+      const st = dayStats(next, today)
+      return done(next, `🚶 60-min walk done (+5,500). Steps: ${num(st.steps)} / ${num(st.stepTarget)}. Brava, ${name}.`)
+    }
+    // bare "done" / "done sir": which one is a judgement call (Gemini sees the chat), else show the list
+    if (!q) {
+      return {
+        ...noChange(open.length
+          ? `Which chore was vanquished, ${name}? Send "done 1" for the first:\n${open.slice(0, 5).map((t, i) => `${i + 1}. ${t.title}`).join('\n')}`
+          : `Which chore was vanquished, ${name}? There are none open. Tell your mother!`),
+        unsure: open.length > 0,
+      }
+    }
     const n = /^#?(\d{1,2})$/.exec(q)
     // by words: your own tasks first, so "done recharge" ticks your task rather than marking the bills paid
-    const byWords = (x: (typeof open)[number]) => x.title.toLowerCase().includes(q)
+    // the whole phrase, or every real word of it, with typos ("buying soap" → "buy soap", "electrcity bill")
+    const qWords = q.split(/\s+/).filter((w) => w.length >= 3)
+    const byWords = (x: (typeof open)[number]) => {
+      const tw = x.title.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean)
+      return x.title.toLowerCase().includes(q) || (qWords.length > 0 && qWords.every((w) => tw.some((t) => t === w || nearly(t, w) || (w.length >= 4 && t.startsWith(w.slice(0, -3))))))
+    }
     const t = n ? open[Number(n[1]) - 1] : (open.find((x) => !x.id.startsWith('auto:') && byWords(x)) ?? open.find(byWords))
     if (!t) {
-      return noChange(n
-        ? `There is no obligation number ${n[1]}, ${name}. Send "tasks" to see the list.`
-        : `No open obligation matches "${rest}", ${name}! Are you inventing phantom chores?`)
+      return {
+        ...noChange(n
+          ? `There is no obligation number ${n[1]}, ${name}. Send "tasks" to see the list.`
+          : `I can't find a chore called "${q}", ${name}. Send "tasks" for the list, then "done 2".`),
+        unsure: !n,
+      }
     }
     const next = t.id.startsWith('auto:')
       ? A.completeAutoTask(t.id, fv.debt.installmentLeft, today)(state)
@@ -794,12 +1084,15 @@ function handle(state: AppState, input: string, now: Date): BotResult {
     return noChange(open.length ? `🎭 Sordid Obligations Awaiting Execution (${open.length}):\n${open.slice(0, 10).map((t, i) => `${i + 1}. ${t.title}${t.priority === 'high' ? ' ⚡' : ''}`).join('\n')}` : `✨ The stage is clear, ${name}! Not a single chore remains! 🥂`)
   }
 
-  // ---- money events
-  if (cmd === 'salary') {
-    const n = parseAmount(restTokens[0] ?? '')
+  // ---- money events: "salary 25160", "got salary 25160", "salary credited 25,160", "i got 25160 salary"
+  const salaryM = !strictQuestion && !isPlan && /\b(salary|paycheck)\b/.test(norm) && /\b(got|credited|received|came|aaya|aayi|aa gaya|aa gayi|landed)\b/.test(norm)
+  // "salary day is 8th" is not a salary arriving
+  if (salaryM || (cmd === 'salary' && (!restTokens.length || /\d{3,}/.test(rest)))) {
+    const n = norm.split(/\s+/).map((w) => parseAmount(w)).find((x) => x !== null && x >= 1000) ?? null
     if (n === null) return noChange(`Confess the grand total, ${name}! What did they replenish our coffers with?`)
     const fv = computeFinance(state, today)
     const next = A.receiveSalary(fv.cycle.key, n, today)(state)
+    mem.wallet = undefined // salary starts a fresh month; the pocket pool replaces the cash count
     const a = computeFinance(next, today).alloc
     const perDay = a.pocket / fv.cycle.totalDays
     return done(
@@ -813,6 +1106,43 @@ function handle(state: AppState, input: string, now: Date): BotResult {
     const next = A.logDebtPayment(n, today)(state)
     if (next === state) return noChange(`The shackles are already gone, ${name}! We owe not a single pence to anyone! 🥂`)
     return done(next, `⚔️ ${fmt(n)} paid down! Still remaining in the shadows: ${fmt(computeFinance(next, today).debt.remaining)}`)
+  }
+
+  const firstMoney = norm.replace(/\?/g, ' ').split(/\s+/).map((w) => parseAmount(w)).find((x) => x !== null && x >= 10) ?? null
+  const debtLine = (s: AppState) => { const d = computeFinance(s, today).debt; return `⚔️ You now owe ${fmt(d.remaining)} in all.` }
+
+  // ---- paying someone back: "paid back 500 to ravi", "returned 500 to rahul", "repaid 500", "gave back 500"
+  if (!strictQuestion && firstMoney && /\b(paid back|pay back|payed back|returned|return|repaid|repay|gave back|give back|cleared|settled)\b/.test(norm) && !/\b(will|tomorrow|going to|need to|have to|should)\b/.test(norm)) {
+    const to = /\bto\s+(?:my\s+)?([a-z]+)/.exec(norm)?.[1]
+    const who = to && !/^(him|her|them|friend|frnd)$/.test(to) ? to : ''
+    const next = repay(state, firstMoney, who, today)
+    if (next === state) return noChange(`There's no debt left to pay back, ${name}. Did you mean to log it as spending? Send "spent ${firstMoney} ..."`)
+    const cashNow = walletLeft(next)
+    const cashLine = cashNow ? `\n👛 Cash in hand: ${fmt(cashNow.left)}${cashNow.left < 0 ? ` — that's more than the cash I knew about. Send "i have 300 in wallet" with the real figure.` : ''}` : ''
+    return done(next, `🤝 Paid back ${fmt(firstMoney)}${who ? ` to ${who}` : ''}. ${debtLine(next)}${cashLine}`)
+  }
+
+  // ---- borrowing adds to debt: "I took 500 from my frnd", "borrowed 500 from rahul", "rahul gave me 500", "add 500 to debt", "i owe ravi 500"
+  const borrowWords = /\b(borrowed|borrow|took|taken|lent me|gave me|sent me|udhaar|udhar|loan|owe|add(ed)? .*\bto (my )?debt|debt \+|\+\s*\d+ debt)\b|\bdebt\s*\+/.test(norm)
+  const notALoan = /\b(atm|bank|account|station|office|shop|market|savings|steps?|auto|cab|uber|rapido|bus|metro|bought|spent|ate|had)\b/.test(norm)
+  if (!strictQuestion && firstMoney && borrowWords && !notALoan && !isPlan && !/\bhow much\b/.test(norm)) {
+    const from = lenderOf(norm)
+    const next = borrow(state, firstMoney, from, today, now)
+    return done(next, `📝 Added ${fmt(firstMoney)} you owe ${from} to your debt. ${debtLine(next)}\nI set a reminder to repay ${from} by payday. Send "paid back ${firstMoney} to ${from}" when you do.${walletLeft(next) ? `\n👛 Cash in hand: ${fmt(walletLeft(next)!.left)}` : ''}`)
+  }
+
+  // ---- cash in hand: "i have 400 in wallet", "wallet 400", "cash left 400", "400 left in my wallet", "only 400 cash"
+  const walletSay = /\b(wallet|purse|in hand|cash|pocket|on me)\b/.test(norm) && /\b(have|got|left|remaining|bacha|bache|only|hai|is|wallet|cash)\b/.test(norm)
+  if (!strictQuestion && firstMoney && walletSay && !/\b(spent|paid|bought|gave|took|borrowed|withdrew|withdraw)\b/.test(norm) && !isPlan) {
+    setWallet(firstMoney, now, state)
+    const fv = computeFinance(state, today)
+    const days = fv.cycle.daysToPayday
+    return noChange(`👛 Noted: ${fmt(firstMoney)} cash in hand${fv.pending && days > 0 ? ` for ${days} days till payday. That's about ${fmt(firstMoney / days)} a day, ${name}` : ''}. I'll take what you spend off it.`)
+  }
+  if (/\b(how much|what'?s|kitna|kitne)\b.*\b(cash|wallet|in hand)\b|\b(cash|wallet) (left|status)\b/.test(norm)) {
+    const w = walletLeft(state)
+    if (!w) return noChange(`You haven't told me your cash, ${name}. Send "i have 400 in wallet" and I'll keep count.`)
+    return noChange(`👛 Cash in hand: ${fmt(w.left)} (you said ${fmt(w.amount)} on ${fmtDate(w.at.slice(0, 10), { day: 'numeric', month: 'short' })}, minus what you've logged since).`)
   }
 
   // ---- money questions: "what did I spend today", "can I afford a movie for 400", "how am I doing"
@@ -837,12 +1167,25 @@ function handle(state: AppState, input: string, now: Date): BotResult {
     const yday = /\byesterday\b/.test(lower)
     return noChange(dayExpenses(state, yday ? addDays(today, -1) : today, yday ? 'yesterday' : 'today', name))
   }
-  if (/\bafford\b/.test(lower) || (isQuestion && /^(can|could|should|shall) i (spend|buy|get|order|go|have)\b/.test(lower))) {
+  // plans with a price get the same verdict, never a log: "i want to buy headphones 1500"
+  const affordTalk = /\bafford\b/.test(lower) || (isQuestion && /^(can|could|should|shall) i (spend|buy|get|order|go|have)\b/.test(lower)) ||
+    (isPlan && /\d/.test(lower) && (moneyMark || /\b(buy\w*|order\w*|spend\w*|get|getting|purchas\w*|book\w*|pay\w*|afford)\b/.test(norm)) && !NOT_MONEY.test(lower))
+  if (affordTalk && !/\b(debt|owe|borrow\w*|took|loan|pay back|repay|udhaar|udhar)\b/.test(norm)) {
     const m = moneyToday(state, today)
-    const amtTok = text.split(' ').find((t) => parseAmount(t) !== null)
+    const amtTok = text.replace(/\?/g, ' ').split(' ').find((t) => parseAmount(t) !== null && parseAmount(t)! >= 10)
     const want = amtTok ? parseAmount(amtTok)! : null
     const isOuting = /\b(movie|movies|cinema|date|party|pub|drinks|concert|outing|weekend)\b/.test(lower)
     const fun = m.fv.pending ? null : Math.max(0, m.fv.lifestyle.left)
+    const w = walletLeft(state)
+    // before salary, the only money is the cash in hand (if you told me): judge against that
+    if (m.fv.pending && w) {
+      const days = Math.max(1, m.fv.cycle.daysToPayday)
+      if (want === null) return { ...noChange(`You have ${fmt(w.left)} cash for ${days} days (≈ ${fmt(w.left / days)}/day), ${name}. Tell me the price and I'll rule on it.`), unsure: true }
+      const after = w.left - want
+      return noChange(after < 0
+        ? `No, darling. ${fmt(want)} is more than the ${fmt(w.left)} cash you have, and payday is ${days} days away.`
+        : `${fmt(want)} leaves ${fmt(after)} cash for ${days} days, about ${fmt(after / days)} a day. ${after / days >= 30 ? `Doable, ${name}. Food first.` : `Tight, ${name}. Only if it's food or truly needed.`}\nI haven't logged it. Tell me when you've actually bought it.`)
+    }
     if (m.fv.pending) {
       return noChange(`Afford it? With what, darling? ${want ? `${fmt(want)} is a fantasy until payday.` : 'We are a woman of means without the means.'}\n${brokeStatus(state, today)}`)
     }
@@ -882,16 +1225,38 @@ function handle(state: AppState, input: string, now: Date): BotResult {
   const isExpenseWord = ['spent', 'spend', 'paid', 'pay', 'exp', 'expense', 'bought', 'buy', 'gave', 'ordered'].includes(cmd)
   const firstAmount = parseAmount(cmdRaw)
   const tokens = isExpenseWord ? restTokens : text.split(' ')
-  // "500 gm paneer 120": 500 is a quantity (followed by a unit), 120 is the price
-  const amountIdx = tokens.findIndex((t, i) => parseAmount(t) !== null && !UNITS.has((tokens[i + 1] ?? '').toLowerCase()))
-  // short messages with a number are expenses; longer ones need a money word ("spent", "gave", "₹")
+  // which number is the price. Not a quantity ("500 gm paneer 120", "6 eggs 48"), a time ("class at 5", "meeting at 3 pm"),
+  // an age or a duration ("25 years old", "10 hours"), or a small count with no ₹ ("bought 2 shirts", "watched 2 movies")
+  const explicitRupees = (i: number) => /₹|rs|inr|rupees|\/-/i.test(tokens[i]) || /^(₹|rs\.?|inr|rupees|\/-)$/i.test(tokens[i + 1] ?? '') || /^(₹|rs\.?|inr)$/i.test(tokens[i - 1] ?? '')
+  const isPriceAt = (t: string, i: number) => {
+    const n = parseAmount(t)
+    if (n === null) return false
+    const next = (tokens[i + 1] ?? '').toLowerCase()
+    const prev = (tokens[i - 1] ?? '').toLowerCase()
+    if (UNITS.has(next)) return false
+    if (/^(at|by|around|till|until|age|aged|before|after)$/.test(prev) && !explicitRupees(i)) return false
+    if (/^(am|pm|o'?clock|years?|yrs?|yr|old|hours?|hrs?|days?|weeks?|months?|th|st|nd|rd|%|times|people|persons|kids|members|guys|friends|stars?)$/.test(next)) return false
+    return n >= 10 || explicitRupees(i)
+  }
+  const amountIdx = tokens.findIndex(isPriceAt)
+  // not spending at all: who you are, asking for something, salary talk
+  // ...or a correction of an old one ("uber 120 not 112"), which is never a new expense
+  const notSpending = /\b(i am|i'm|im|age|years old|give me|lend me|send me|salary|paycheck)\b|\bnot\s+(₹|rs\.?\s*)?\d/.test(lower)
+  // short messages with a price are expenses; longer ones need a money word ("spent", "gave", "₹")
   const looksLikeExpense =
-    (isExpenseWord || firstAmount !== null || (amountIdx >= 0 && (tokens.length <= 5 || MONEY_VERB.test(lower)))) &&
-    !NOT_MONEY.test(lower) && !isQuestion
+    amountIdx >= 0 && (isExpenseWord || tokens.length <= 5 || MONEY_VERB.test(lower)) &&
+    !NOT_MONEY.test(lower) && !isQuestion && !notSpending && !isPlan
+  void firstAmount
   // rent and bills are already set aside from salary: mark them paid instead of spending pocket money twice
-  if ((isExpenseWord || looksLikeExpense) && /\b(rent|bills?)\b/i.test(lower)) {
+  // "rent paid", "bills paid", "paid the rent", "rent diya"
+  const rentDone = !isQuestion && /\b(rent|bills?)\b/i.test(lower) && /\b(paid|done|diya|bhar diya|cleared|transferred|sent)\b/i.test(lower)
+  if ((isExpenseWord || looksLikeExpense || rentDone) && /\b(rent|bills?)\b/i.test(lower)) {
     const fv = computeFinance(state, today)
-    if (!fv.pending) {
+    if (fv.pending) {
+      // before salary, rent isn't pocket spending either: it comes out of the salary when it lands
+      return noChange(`${/\brent\b/i.test(lower) ? 'Rent comes' : 'Bills come'} out of the salary, ${name}, not the pocket pool, so I haven't logged it as spending. Once salary lands, send "salary <amount>" and then "paid rent".\n${brokeStatus(state, today)}`)
+    }
+    {
       const isRent = /\brent\b/i.test(lower)
       const key = `${fv.cycle.key}:${isRent ? 'rent' : 'fixed'}`
       if (state.paid[key]) return noChange(`${isRent ? 'Rent' : 'The bills'} already marked paid this cycle, ${name}. Paying twice is not generosity, it is madness.`)
@@ -902,8 +1267,8 @@ function handle(state: AppState, input: string, now: Date): BotResult {
     }
   }
   // several things in one message: "eggs tray 210, apples 120 and banana 60" → one expense each
-  if (!isQuestion && !NOT_MONEY.test(lower)) {
-    const parts = (isExpenseWord ? rest : text).split(/\s*(?:,|;|\+|&|\band\b)\s*/i).map((p) => p.trim()).filter(Boolean)
+  if (!isQuestion && !NOT_MONEY.test(lower) && !notSpending && !isPlan) {
+    const parts = splitPairs(isExpenseWord ? rest : text).split(/\s*(?:,|;|\+|&|\band\b)\s*/i).map((p) => p.trim()).filter(Boolean)
     if (parts.length >= 2) {
       const items = parts.map((p) => {
         const toks = p.split(' ').filter((w) => !FILLER.has(w.toLowerCase()))
@@ -967,7 +1332,9 @@ function handle(state: AppState, input: string, now: Date): BotResult {
   const brain = classify(text, train(mem.learned))
   if (brain.intent && brain.score >= CONFIDENT) {
     const reply = answer(brain.intent, text, { s: state, now, name, pick: pickNoRepeat, broke: () => brokeStatus(state, today) })
-    if (reply) return noChange(reply)
+    // "i finished the steps", "took 500 from a friend": they are reporting something, not asking for a status
+    const reporting = /\d|\b(ate|had|drank|walked|did|finished|completed|took|borrowed|lent|got|received|remove|reduce|delete|minus|wrong|actually|missed|skipped|forgot|didnt|didn't|not|never|only)\b/.test(lower)
+    if (reply) return reporting && !isQuestion ? { ...noChange(reply), unsure: true } : noChange(reply)
   }
 
   // ---- conversation: only reached when the message was not a command or an expense
@@ -1134,5 +1501,6 @@ function handle(state: AppState, input: string, now: Date): BotResult {
   ]
   // when she doesn't understand, she at least talks about your day
   const n = nudge(state, now)
-  return { ...noChange(pickNoRepeat('fallbacks', chatFallbacks) + (n ? `\n${n}` : '')), fallback: true }
+  // a short message with a number ("2 samosas", "took 500") is a report we missed: worth asking Gemini
+  return { ...noChange(pickNoRepeat('fallbacks', chatFallbacks) + (n ? `\n${n}` : '')), fallback: true, unsure: /\d/.test(text) }
 }

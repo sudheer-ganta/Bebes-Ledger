@@ -9,6 +9,7 @@ import { computeFinance } from '../../../client/src/lib/finance'
 import { currentWeekIndex, outOfStockItems, weekKeyOf, weekTotals } from '../../../client/src/lib/groceries'
 import { deriveAutoTasks } from '../../../client/src/lib/smart'
 import { fmt, litres, num, sum } from '../../../client/src/lib/util'
+import { nearly } from './parse'
 
 // ---------------------------------------------------------------- training data
 
@@ -66,6 +67,8 @@ const tokens = (text: string) => text.split(/\s+/).map(norm).filter((t) => t && 
 // one wrong / missing / extra letter, for words of 5+ letters (so "fold" never becomes "food") ("monye", "grocries", "saivngs")
 function close(a: string, b: string): boolean {
   if (a === b) return true
+  // real words one letter from a known one ("later" vs "water") are not typos
+  if (!nearly(a, b) && a.length === b.length) return false
   if (Math.min(a.length, b.length) < 5 || Math.abs(a.length - b.length) > 1) return false
   let i = 0, j = 0, edits = 0
   while (i < a.length && j < b.length) {
@@ -187,7 +190,9 @@ export function answer(intent: string, text: string, c: BrainCtx): string | null
     case 'debt': {
       const d = fv.debt
       if (d.cleared || d.remaining <= 0) return `🥂 Debt cleared, ${name}. We owe not a single paisa to anyone.`
-      return `⚔️ Debt left ${fmt(d.remaining)} of ${fmt(d.total)} (${fmt(d.paidSoFar)} paid). About ${d.monthsLeft} month${d.monthsLeft === 1 ? '' : 's'} to go${d.installmentLeft > 0 ? `; ${fmt(d.installmentLeft)} still due this cycle` : '; this cycle is paid'}.`
+      // friends you borrowed from (each has a "repay ₹500 to rahul" reminder)
+      const people = s.tasks.filter((t) => !t.done && /^repay\b/i.test(t.title)).map((t) => `• ${t.title.replace(/^repay\s+/i, '')}`)
+      return `⚔️ Debt left ${fmt(d.remaining)} of ${fmt(d.total)} (${fmt(d.paidSoFar)} paid). About ${d.monthsLeft} month${d.monthsLeft === 1 ? '' : 's'} to go${d.installmentLeft > 0 ? `; ${fmt(d.installmentLeft)} still due this cycle` : '; this cycle is paid'}.${people.length ? `\nOf that, borrowed from people:\n${people.join('\n')}` : ''}`
     }
     case 'savings':
       return `🏰 Savings floor ${fmt(fv.savings.floorNow)} · emergency buffer ${fmt(Math.max(0, fv.buffer.left))}${fv.savings.withdrawals ? ` · ${fmt(fv.savings.withdrawals)} pulled out this cycle` : ''}.\n"One does not pilfer from the vault, ${name}."`

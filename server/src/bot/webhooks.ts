@@ -71,7 +71,7 @@ export function handleText(text: string, deps: BotDeps): Promise<string> {
     const now = deps.now?.() ?? new Date()
     const memory = (await deps.loadMemory?.().catch(() => null)) ?? emptyMemory()
     const state = hydrate(raw as Partial<AppState>)
-    let result: { state: AppState; reply: string; changed: boolean; fallback?: boolean; memory: BotMemory } =
+    let result: { state: AppState; reply: string; changed: boolean; fallback?: boolean; unsure?: boolean; memory: BotMemory } =
       runCommand(state, text, now, memory)
     const mem = result.memory
     const history = mem.history ?? []
@@ -80,8 +80,12 @@ export function handleText(text: string, deps: BotDeps): Promise<string> {
     const day = toISO(now)
     const used = mem.ai?.day === day ? mem.ai.count : 0
     // only real sentences (4+ words) our own brain could not place; "hmm" or "ok la" never costs anything
-    const worthAsking = text.trim().split(/\s+/).length >= 4
-    if (result.fallback && worthAsking && deps.askMoira && used < (deps.aiDailyLimit ?? 30)) {
+    // ...or anything the rules only guessed at ("done", "ate maggi", "i finished the steps"), however short
+    // ...or a short answer to a question she just asked ("it yes", "no", "170"), which only makes sense with the chat
+    const lastSaid = [...history].reverse().find((t) => t.role === 'assistant')?.text ?? ''
+    const answeringHer = /\?\s*\S{0,3}\s*$/.test(lastSaid.trim()) && !!result.fallback
+    const worthAsking = result.unsure || answeringHer || (result.fallback && text.trim().split(/\s+/).length >= 4)
+    if (worthAsking && deps.askMoira && used < (deps.aiDailyLimit ?? 30)) {
       try {
         const ai = await deps.askMoira(state, text, now, history)
         mem.ai = { day, count: used + 1 }

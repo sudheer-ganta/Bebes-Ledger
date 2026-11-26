@@ -7,7 +7,7 @@ import { addDays, toISO } from '../../../client/src/lib/date'
 import { dayStats } from '../../../client/src/lib/day'
 import { computeFinance } from '../../../client/src/lib/finance'
 import { fmt, litres, num } from '../../../client/src/lib/util'
-import { brokeStatus, factsFor, guessCategory, moneyToday, slotFor } from './commands'
+import { borrow, brokeStatus, factsFor, guessCategory, moneyToday, openTasks, repay, setWallet, slotFor } from './commands'
 
 export interface ChatTurn {
   role: 'user' | 'assistant'
@@ -38,10 +38,18 @@ Facts and numbers:
 - Budgeting advice from these facts only. No investment, loan or tax advice.
 
 Tools (they change the user's real data):
-- Use a tool only when the user clearly reports something that already happened, with an amount: money spent, water drunk, steps walked, food eaten (log_meal, with your protein estimate), a chore to remember, rent or bills paid.
+- Use a tool when the user reports something that already happened: money spent, water drunk, steps walked, the walk done, food eaten (log_meal, with your protein estimate), a chore finished or to remember, rent or bills paid, or a correction to any of these.
 - When the user lists several things in one message (food, water, steps), call every matching tool, each once.
 - Never log questions, plans or hypotheticals ("can I", "should I", "thinking of", "tomorrow I will buy").
 - If the amount is missing or unclear, ask instead of guessing. Log each thing once.
+- Corrections are normal: to fix a wrong step or water figure (lower or higher), use set_steps or set_water with the right total, computed from the facts. Never say something cannot be removed or changed.
+- "Done", "finished", "did it" without naming the thing: use the recent chat and the Open tasks to work out what they finished. If one task obviously fits, complete_task it; if it is about steps or water ("finished the steps"), log what the task said was remaining; if you can't tell, ask which, listing the open tasks briefly.
+- Food: always log_meal with your own protein estimate, even for dishes you have to guess (biryani, maggi, thali). If the rules just logged it with a poor guess, the user sees your entry instead, so log it fully.
+- A wrong expense: fix_expense (new amount, or 0 to delete). A wrong meal: undo_meal, then log_meal the right one.
+- Borrowed money (from a friend, a loan) is debt, not spending: add_debt it, never log_expense. Paying it back: repay_debt. Lending money to someone is spending.
+- Cash in hand ("i have 400 in wallet"): set_cash. Before salary, judge every "can I buy" against the cash in the facts and the days to payday.
+- Something they will buy, might buy, or don't know the price of yet is a plan: never log it. If they ask a price, give a typical Indian price range from your own knowledge (say it's a rough guess), and what it leaves of their cash.
+- A short reply ("yes", "it yes", "no", a number) answers your last question in the chat: act on it.
 - Rent and bills come out of money set aside at salary: use mark_paid, never log_expense, for those.
 - After a tool runs, say what you logged and the new figure from the tool result.`
 
@@ -72,6 +80,25 @@ const TOOLS = [
     parameters: obj({ steps: { type: 'INTEGER' } }),
   },
   {
+    name: 'set_steps',
+    description: "Set today's step total to an exact number, to correct a wrong count (e.g. 'my steps are actually 5000', 'remove 1000 steps': compute the new total from the facts).",
+    parameters: obj({ total: { type: 'INTEGER', description: 'The correct total steps for today' } }),
+  },
+  {
+    name: 'set_water',
+    description: "Set today's water total to an exact number of millilitres, to correct a wrong amount (e.g. 'water is actually 1.5 L', 'remove 500 ml': compute the new total from the facts).",
+    parameters: obj({ total_ml: { type: 'INTEGER', description: 'The correct total water for today, in mL' } }),
+  },
+  {
+    name: 'log_walk',
+    description: 'Mark the 60-minute walk to the gym as done today (it adds 5,500 steps by itself).',
+  },
+  {
+    name: 'complete_task',
+    description: 'Tick off an open task, by its number in the "Open tasks" fact.',
+    parameters: obj({ number: { type: 'INTEGER', description: 'Task number from the Open tasks list, starting at 1' } }),
+  },
+  {
     name: 'add_task',
     description: "Add a chore or reminder to the user's task list.",
     parameters: obj({ title: str(), due: str(undefined, ['today', 'tomorrow']), urgent: { type: 'BOOLEAN' } }),
@@ -89,6 +116,33 @@ const TOOLS = [
       protein_g: { type: 'INTEGER', description: 'Estimated total protein in grams' },
       cost: { type: 'INTEGER', description: 'Rupees if bought outside; 0 if home food' },
     }),
+  },
+  {
+    name: 'fix_expense',
+    description: "Change the amount of, or delete, one recent expense found by words from its title (e.g. 'that rapido was 107 not 117', 'remove the uber'). Use the expense list in the facts.",
+    parameters: obj({
+      title_words: str('Words from the expense title, e.g. "rapido"'),
+      new_amount: { type: 'NUMBER', description: 'The correct rupees, or 0 to delete it' },
+    }),
+  },
+  {
+    name: 'add_debt',
+    description: 'The user borrowed money from someone (a friend, a loan). Adds it to their debt and sets a reminder to repay by payday. Never log_expense borrowed money.',
+    parameters: obj({ amount: { type: 'NUMBER' }, from: str('Who lent it, e.g. "rahul" or "friend"') }),
+  },
+  {
+    name: 'repay_debt',
+    description: 'The user paid back money they owed. Counts against their debt (not new spending) and ticks the repay reminder.',
+    parameters: obj({ amount: { type: 'NUMBER' }, to: str('Who they repaid, or "" if not said') }),
+  },
+  {
+    name: 'set_cash',
+    description: 'The user told you how much cash they have in hand / in their wallet right now. Spending logged after this comes off it.',
+    parameters: obj({ amount: { type: 'NUMBER' } }),
+  },
+  {
+    name: 'undo_meal',
+    description: "Remove today's most recent meal (and its cost, if any), e.g. to replace a wrong entry. Then log_meal the right one.",
   },
   {
     name: 'undo_expense',
@@ -132,6 +186,36 @@ export function runTool(state: AppState, name: string, input: unknown, now: Date
       const st = dayStats(next, today)
       return { state: next, result: `Added ${num(n)} steps. Steps today: ${num(st.steps)} of ${num(st.stepTarget)}.` }
     }
+    case 'set_steps': {
+      const n = Math.round(Number(i.total))
+      if (!Number.isFinite(n) || n < 0 || n > 100000) return { state, result: 'Invalid total; ask the user.', error: true }
+      // the walk habit credits steps of its own; extra steps make up the rest
+      const credit = dayStats(state, today).stepCredit
+      const next = A.setExtraSteps(today, Math.max(0, n - credit))(state)
+      const st = dayStats(next, today)
+      return { state: next, result: `Steps today set to ${num(st.steps)} of ${num(st.stepTarget)}.${n < credit ? ` (The 60-min walk alone counts ${num(credit)}; untick it in the app to go lower.)` : ''}` }
+    }
+    case 'set_water': {
+      const ml = Math.round(Number(i.total_ml))
+      if (!Number.isFinite(ml) || ml < 0 || ml > 10000) return { state, result: 'Invalid total; ask the user.', error: true }
+      const next = A.setWaterTotal(today, ml)(state)
+      const st = dayStats(next, today)
+      return { state: next, result: `Water today set to ${litres(st.waterMl)} of ${litres(st.waterTarget)}.` }
+    }
+    case 'log_walk': {
+      if (state.dayLogs[today]?.habits?.walk) return { state, result: 'The 60-min walk was already marked done today.' }
+      const next = A.toggleHabit(today, 'walk')(state)
+      const st = dayStats(next, today)
+      return { state: next, result: `60-min walk marked done. Steps today: ${num(st.steps)} of ${num(st.stepTarget)}.` }
+    }
+    case 'complete_task': {
+      const fv = computeFinance(state, today)
+      const open = openTasks(state, fv, now)
+      const t = open[Math.round(Number(i.number)) - 1]
+      if (!t) return { state, result: `No open task number ${String(i.number)}; there are ${open.length}. Ask the user which.`, error: true }
+      const next = t.id.startsWith('auto:') ? A.completeAutoTask(t.id, fv.debt.installmentLeft, today)(state) : A.toggleTask(t.id)(state)
+      return { state: next, result: `Ticked off "${t.title}".` }
+    }
     case 'add_task': {
       const title = String(i.title ?? '').trim().slice(0, 120)
       if (!title) return { state, result: 'No task title; ask the user.', error: true }
@@ -158,6 +242,46 @@ export function runTool(state: AppState, name: string, input: unknown, now: Date
       const key = `${fv.cycle.key}:${isRent ? 'rent' : 'fixed'}`
       if (state.paid[key]) return { state, result: `${isRent ? 'Rent' : 'Bills'} were already marked paid this cycle.` }
       return { state: A.setPaid(key, true)(state), result: `${isRent ? `Rent (${fmt(state.finance.rent)})` : `Bills (${fmt(state.finance.fixed)})`} marked paid from the money set aside at salary.` }
+    }
+    case 'fix_expense': {
+      const words = String(i.title_words ?? '').toLowerCase().split(/\s+/).filter((w) => w.length >= 3)
+      const amount = Number(i.new_amount)
+      if (!words.length) return { state, result: 'Which expense? Ask the user.', error: true }
+      if (!Number.isFinite(amount) || amount < 0 || amount > 200000) return { state, result: 'Invalid amount; ask the user.', error: true }
+      const e = [...state.expenses].reverse().find((x) => x.date >= addDays(today, -7) && (x.source === 'manual' || x.source === 'meal') && words.some((w) => x.title.toLowerCase().includes(w)))
+      if (!e) return { state, result: `No expense in the last week matches "${words.join(' ')}".`, error: true }
+      if (amount === 0) {
+        const next = A.deleteExpense(e.id)(state)
+        return { state: next, result: `Deleted ${fmt(e.amount)} ${e.title}. ${after(next)}` }
+      }
+      const next = A.patchState({ expenses: state.expenses.map((x) => (x.id === e.id ? { ...x, amount: Math.round(amount) } : x)) })(state)
+      return { state: next, result: `Changed ${e.title} from ${fmt(e.amount)} to ${fmt(amount)}. ${after(next)}` }
+    }
+    case 'add_debt': {
+      const amount = Number(i.amount)
+      if (!Number.isFinite(amount) || amount <= 0 || amount > 500000) return { state, result: 'Invalid amount; ask the user.', error: true }
+      const from = String(i.from ?? '').trim().toLowerCase().slice(0, 30) || 'friend'
+      const next = borrow(state, amount, from, today, now)
+      return { state: next, result: `Added ${fmt(amount)} owed to ${from}. Total debt now ${fmt(computeFinance(next, today).debt.remaining)}. Reminder set to repay by payday.` }
+    }
+    case 'repay_debt': {
+      const amount = Number(i.amount)
+      if (!Number.isFinite(amount) || amount <= 0 || amount > 500000) return { state, result: 'Invalid amount; ask the user.', error: true }
+      const next = repay(state, amount, String(i.to ?? '').trim().toLowerCase(), today)
+      if (next === state) return { state, result: 'No debt left to repay.', error: true }
+      return { state: next, result: `Repaid ${fmt(amount)}. Debt left ${fmt(computeFinance(next, today).debt.remaining)}.` }
+    }
+    case 'set_cash': {
+      const amount = Number(i.amount)
+      if (!Number.isFinite(amount) || amount < 0 || amount > 500000) return { state, result: 'Invalid amount; ask the user.', error: true }
+      setWallet(amount, now, state)
+      return { state, result: `Cash in hand set to ${fmt(amount)}.` }
+    }
+    case 'undo_meal': {
+      const last = state.meals.filter((m) => m.date === today).at(-1)
+      if (!last) return { state, result: 'No meal logged today.' }
+      const next = A.deleteMeal(last.id)(state)
+      return { state: next, result: `Removed ${last.slot}: ${last.title} (${last.protein} g). Protein today: ${dayStats(next, today).proteinG} g.` }
     }
     case 'undo_expense': {
       const clearAll = !!i.clear_all_today
