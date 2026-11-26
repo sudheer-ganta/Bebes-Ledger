@@ -114,6 +114,12 @@ export interface BotMemory {
   /** cash in hand you told her about ("i have 400 in wallet"); spending logged after `at` comes off it */
   wallet?: { amount: number; at: string; base?: number }
 }
+/** A question that wants judgement, not a number from the books. */
+export function isAdvice(input: string): boolean {
+  const t = input.toLowerCase().replace(/\s+/g, ' ')
+  return /\b(should (i|we)|shall (i|we)|do you think|what do you think|your (opinion|advice|suggestion)|is it (better|worth|ok|okay|good|fine|smart|wise)|better to|worth it|recommend|suggest\w*|advice|advise|which (one|is better|should)|or should|or just|or only|instead of|help me (decide|plan|choose|budget)|plan my|how (many|much) .*\b(need|should|buy|get|enough|last)\b|is \d+ enough|will (it|that|this) (last|be enough)|(be|is|are) enough|enough (till|until|for|to last)|last (me )?(till|until))\b/.test(t)
+}
+
 export const emptyMemory = (): BotMemory => ({ picks: {}, morning: { count: 0, at: 0 } })
 
 // runCommand is synchronous and messages are handled one at a time, so a module-level "current memory" is safe
@@ -586,7 +592,11 @@ function limitLine(s: AppState, now: Date): string {
  */
 export function runCommand(state: AppState, input: string, now: Date = new Date(), memory?: BotMemory): BotResult & { memory: BotMemory } {
   if (memory) mem = structuredClone({ ...emptyMemory(), ...memory })
-  const r = handle(state, input, now)
+  let r = handle(state, input, now)
+  // advice and judgement calls ("should i buy a full tray or a few", "how many eggs do i need till payday",
+  // "is it worth it") are Gemini's: it does the maths from the facts. The rule reply stays as the fallback,
+  // and Gemini works from the untouched state, so nothing the rules did here sticks when it answers.
+  if (isAdvice(input)) r = { ...r, unsure: true }
   // remember what nobody understood, so it can be taught later ("unknowns")
   if (r.fallback && input.trim()) mem.unknown = [...(mem.unknown ?? []).filter((u) => u !== input.trim()), input.trim().slice(0, 120)].slice(-20)
   return { ...r, memory: mem }

@@ -4,7 +4,7 @@ import { hydrate } from '../../client/src/lib/hydrate'
 import { dayStats } from '../../client/src/lib/day'
 import { toISO } from '../../client/src/lib/date'
 import type { AppState } from '../../client/src/types'
-import { emptyMemory, runCommand } from '../src/bot/commands'
+import { emptyMemory, isAdvice, runCommand } from '../src/bot/commands'
 
 process.env.TZ = 'Asia/Kolkata'
 const now = new Date('2026-11-26T18:00:00+05:30')
@@ -260,6 +260,21 @@ expect('starbucks 350', (a, r) => r.state.expenses.at(-1)?.category === 'Outside
   check(q.state.expenses.length === 0 && !!q.unsure, 'a should-I question with no price goes to Gemini', q.reply)
   const eggs = runCommand(base, 'i have 2 eggs left', now, emptyMemory())
   check(eggs.state.expenses.length === 0 && !eggs.memory.wallet, '"i have 2 eggs left" is neither cash nor spending', eggs.reply)
+}
+
+// ---------------------------------------------------------------- advice goes to Gemini; exact questions stay with the rules
+{
+  const check = (ok: boolean, why: string) => { if (!ok) failed++; console.log(`${ok ? 'ok  ' : 'FAIL'} ${why}`) }
+  for (const m of ['now tell me should i buy full tray eggs or few like example we need to eat 3 eggs daily how much do we need till pay day', 'should i buy full tray eggs',
+    'how many eggs do i need till payday', 'is it worth it to buy a full tray', 'will 400 be enough till payday', 'is 400 enough', 'what do you think, movie or save',
+    'which one is better, oil packet or loose oil', 'help me plan my 400 till payday', 'how much oil do i need for a week', 'should i buy shoes for 2000']) {
+    const r = runCommand(base, m, now, emptyMemory())
+    check(isAdvice(m) && !!r.unsure, `advice → Gemini: ${m.slice(0, 50)}`)
+  }
+  for (const m of ['can i afford movie 400', 'how much did i spend today', 'how much money left', 'how many steps', 'how much water', 'how much i owe people',
+    'how much cash do i have', 'bought eggs tray 170', 'eggs 60', 'remove 1000 steps', 'i have 400 left till payday', 'today', 'when is salary', 'ate 2 eggs']) {
+    check(!isAdvice(m), `exact → rules: ${m}`)
+  }
 }
 
 if (failed) {
