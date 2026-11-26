@@ -51,7 +51,8 @@ Tools (they change the user's real data):
 - Something they will buy, might buy, or don't know the price of yet is a plan: never log it. If they ask a price, give a typical Indian price range from your own knowledge (say it's a rough guess), and what it leaves of their cash.
 - A short reply ("yes", "it yes", "no", a number) answers your last question in the chat: act on it.
 - Rent and bills come out of money set aside at salary: use mark_paid, never log_expense, for those.
-- After a tool runs, say what you logged and the new figure from the tool result.`
+- After a tool runs, say what you logged and the new figure from the tool result.
+- Never say you logged, recorded, cleared, set or changed anything unless you called the tool for it in this turn and its result confirmed it. If one message asks for two changes (clear expenses AND note the cash), call both tools.`
 
 const CATEGORIES: ExpenseCategory[] = ['Groceries', 'Outside Food', 'Movies/Dates', 'Rides', 'Personal', 'Emergency']
 
