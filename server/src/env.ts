@@ -36,7 +36,7 @@ export const ai = wa.GEMINI_API_KEY?.trim()
   ? {
       apiKey: wa.GEMINI_API_KEY.trim(),
       model: wa.GEMINI_MODEL?.trim() || 'gemini-3.8-flash',
-      dailyLimit: Math.max(0, Number(wa.MOIRA_AI_DAILY_LIMIT ?? 30)) || 30,
+      dailyLimit: Math.max(0, Number(wa.MOIRA_AI_DAILY_LIMIT ?? 100)) || 100,
     }
   : undefined
 

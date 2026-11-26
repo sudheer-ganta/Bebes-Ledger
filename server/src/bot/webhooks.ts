@@ -85,7 +85,7 @@ export function handleText(text: string, deps: BotDeps): Promise<string> {
     const lastSaid = [...history].reverse().find((t) => t.role === 'assistant')?.text ?? ''
     const answeringHer = /\?\s*\S{0,3}\s*$/.test(lastSaid.trim()) && !!result.fallback
     const worthAsking = result.unsure || answeringHer || (result.fallback && text.trim().split(/\s+/).length >= 4)
-    if (worthAsking && deps.askMoira && used < (deps.aiDailyLimit ?? 30)) {
+    if (worthAsking && deps.askMoira && used < (deps.aiDailyLimit ?? 100)) {
       try {
         const ai = await deps.askMoira(state, text, now, history)
         mem.ai = { day, count: used + 1 }

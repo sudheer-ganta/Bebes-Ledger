@@ -120,6 +120,13 @@ export function isAdvice(input: string): boolean {
   return /\b(should (i|we)|shall (i|we)|do you think|what do you think|your (opinion|advice|suggestion)|is it (better|worth|ok|okay|good|fine|smart|wise)|better to|worth it|recommend|suggest\w*|advice|advise|which (one|is better|should)|or should|or just|or only|instead of|help me (decide|plan|choose|budget)|plan my|how (many|much) .*\b(need|should|buy|get|enough|last)\b|is \d+ enough|will (it|that|this) (last|be enough)|(be|is|are) enough|enough (till|until|for|to last)|last (me )?(till|until))\b/.test(t)
 }
 
+/** Asks for something made up for you, an explanation, or pushback on the last answer. */
+export function isOpenEnded(input: string): boolean {
+  const t = input.toLowerCase().replace(/\s+/g, ' ').trim()
+  if (/^(teach|intents|unknowns|help|menu|tasks|today|week|month|gym|meals|groceries|savings)\b/.test(t) && t.split(' ').length <= 2) return false
+  return /\b(give me|suggest\w*|recommend\w*|routine|schedule|recipe|recipes|ideas?|tips?|plan (my|for|a|the)|make (me )?(a|an|my)|create|design|how (to|do i|can i|should i|do you)|explain|why|motivat\w*|inspire|teach me|tell me (about|how|why|something|a)|what (should|can|could|do) (i|we) (eat|cook|make|do|have|buy)|what to (eat|cook|make|do)|i said|i meant|i asked|not what i|that'?s (wrong|not)|thats (wrong|not)|you('re| are) wrong|wrong answer|not that|no,? i (said|meant|asked|want)|instead|again but|try again|other options?|something else|anything else|more options?)\b/.test(t)
+}
+
 export const emptyMemory = (): BotMemory => ({ picks: {}, morning: { count: 0, at: 0 } })
 
 // runCommand is synchronous and messages are handled one at a time, so a module-level "current memory" is safe
@@ -555,9 +562,14 @@ function weeklyGroceryList(s: AppState, now: Date): string {
 function mealSuggestions(s: AppState, now: Date, slot?: string): string {
   const name = userName(s)
   const chosenSlot = slot ? slot[0].toUpperCase() + slot.slice(1) : slotFor(now.getHours())
+  // breakfast should be breakfast food, not chicken curry; other slots can be anything
+  const pool = /^breakfast|^pre/i.test(chosenSlot)
+    ? CRISIS_MEALS.filter((m) => /\b(eggs?|oats|banana|bananas|bread|toast|poha|upma|bhurji|sprouts|peanut|milk|curd)\b/i.test(m.title))
+    : CRISIS_MEALS
+  const meals = pool.length >= 2 ? pool : CRISIS_MEALS
   // rotate through the cheap meals by day and slot instead of always showing the same two
-  const start = (now.getDate() * 2 + chosenSlot.length) % CRISIS_MEALS.length
-  const samples = [CRISIS_MEALS[start], CRISIS_MEALS[(start + 1) % CRISIS_MEALS.length]]
+  const start = (now.getDate() * 2 + chosenSlot.length) % meals.length
+  const samples = [meals[start], meals[(start + 1) % meals.length]]
 
   const lines = [
     `🍳 ${chosenSlot} — ${name}`,
@@ -597,6 +609,9 @@ export function runCommand(state: AppState, input: string, now: Date = new Date(
   // "is it worth it") are Gemini's: it does the maths from the facts. The rule reply stays as the fallback,
   // and Gemini works from the untouched state, so nothing the rules did here sticks when it answers.
   if (isAdvice(input)) r = { ...r, unsure: true }
+  // open-ended asks (routines, plans, recipes, tips, "how to", "why") and pushback ("i said breakfast", "that's wrong")
+  // need a real answer from the chat, not a canned list. Unless the rules confidently logged something, Gemini answers.
+  else if (isOpenEnded(input) && !(r.changed && !r.unsure)) r = { ...r, unsure: true }
   // remember what nobody understood, so it can be taught later ("unknowns")
   if (r.fallback && input.trim()) mem.unknown = [...(mem.unknown ?? []).filter((u) => u !== input.trim()), input.trim().slice(0, 120)].slice(-20)
   return { ...r, memory: mem }
@@ -1344,6 +1359,13 @@ function handle(state: AppState, input: string, now: Date): BotResult {
           `Look at you, glowing like opening night. Brava, darling.`,
         ])
     return noChange(`${line}\n📓 Send "mood ${sad ? 2 : 4}" to put it in your journal.`)
+  }
+
+  // ---- food ideas for a named meal ("give me a breakfast routine", "dinner ideas"): that meal's ideas, Gemini refines
+  const slotAsk = /\b(breakfast|brunch|lunch|dinner|snacks?|pre ?workout)\b/.exec(lower)
+  if (slotAsk && /\b(routine|ideas?|suggest\w*|recipe|options?|what (should|can|to)|eat for|plan|menu|give me|cook|make|high protein|cheap|under|budget)\b/.test(lower)) {
+    const slot = slotAsk[1].startsWith('brunch') ? 'breakfast' : slotAsk[1].startsWith('snack') ? 'snack' : slotAsk[1].replace(/\s/g, '')
+    return { ...noChange(mealSuggestions(state, now, slot === 'preworkout' ? 'breakfast' : slot)), unsure: true }
   }
 
   // ---- Moira's own brain: questions about money and life, matched against trained example phrases

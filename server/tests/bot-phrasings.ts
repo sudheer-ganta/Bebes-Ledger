@@ -4,7 +4,7 @@ import { hydrate } from '../../client/src/lib/hydrate'
 import { dayStats } from '../../client/src/lib/day'
 import { toISO } from '../../client/src/lib/date'
 import type { AppState } from '../../client/src/types'
-import { emptyMemory, isAdvice, runCommand } from '../src/bot/commands'
+import { emptyMemory, isAdvice, isOpenEnded, runCommand } from '../src/bot/commands'
 
 process.env.TZ = 'Asia/Kolkata'
 const now = new Date('2026-11-26T18:00:00+05:30')
@@ -274,6 +274,24 @@ expect('starbucks 350', (a, r) => r.state.expenses.at(-1)?.category === 'Outside
   for (const m of ['can i afford movie 400', 'how much did i spend today', 'how much money left', 'how many steps', 'how much water', 'how much i owe people',
     'how much cash do i have', 'bought eggs tray 170', 'eggs 60', 'remove 1000 steps', 'i have 400 left till payday', 'today', 'when is salary', 'ate 2 eggs']) {
     check(!isAdvice(m), `exact → rules: ${m}`)
+  }
+}
+
+// ---------------------------------------------------------------- open-ended asks and pushback go to Gemini (live chat, 26 Nov)
+{
+  const check = (ok: boolean, why: string, got?: unknown) => { if (!ok) failed++; console.log(`${ok ? 'ok  ' : 'FAIL'} ${why}${ok ? '' : `\n     got: ${JSON.stringify(got)}`}`) }
+  for (const m of ['give me a breakfast routine', 'i said breakfast', 'no i meant breakfast not lunch', 'what should i eat for breakfast', 'high protein breakfast under 30 rs',
+    'make me a diet plan', 'plan my meals for the week', 'how to cook soya chunks', 'give me workout tips', 'why is my protein so low', 'explain my spending',
+    'motivate me', "that's wrong", 'not that', 'how can i save money', 'create a morning routine', 'recipe for dal', 'give me 3 meal ideas']) {
+    const r = runCommand(base, m, now, emptyMemory())
+    check(!!r.unsure && r.state === base, `open-ended → Gemini, nothing logged: ${m}`, r.reply.split('\n')[0])
+  }
+  for (const m of ['give me a breakfast routine', 'high protein breakfast under 30 rs']) {
+    const b = runCommand(base, m, now, emptyMemory())
+    check(/Breakfast/.test(b.reply) && !/chicken curry|soya chunks masala/i.test(b.reply), `fallback ideas are breakfast food: ${m}`, b.reply)
+  }
+  for (const m of ['breakfast', 'lunch', 'tasks', 'today', 'gym', 'help', 'how much water', 'ate 2 eggs', 'remove 1000 steps']) {
+    check(!isOpenEnded(m), `exact stays with the rules: ${m}`)
   }
 }
 
