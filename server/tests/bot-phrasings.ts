@@ -248,6 +248,20 @@ expect('starbucks 350', (a, r) => r.state.expenses.at(-1)?.category === 'Outside
   check(!step(w.s, 'salary 25160', w.m).m.wallet, 'salary clears the cash count (the pool takes over)')
 }
 
+// ---------------------------------------------------------------- cash said without "wallet" (live chat, 26 Nov)
+{
+  const check = (ok: boolean, why: string, got?: unknown) => { if (!ok) failed++; console.log(`${ok ? 'ok  ' : 'FAIL'} ${why}${ok ? '' : `\n     got: ${JSON.stringify(got)}`}`) }
+  for (const m of ['i have 400 left for until pay day', 'only 300 left till salary', 'i have 250', '400 left till payday']) {
+    const r = runCommand(base, m, now, emptyMemory())
+    check(r.state.expenses.length === 0 && !!r.memory.wallet, `"${m}" sets cash, never an expense`, r.reply)
+  }
+  const mem = runCommand(base, 'i have 400 left for until pay day', now, emptyMemory()).memory
+  const q = runCommand(base, 'should i get ? or should i skip getting full tray eggs and get only some eggs', now, mem)
+  check(q.state.expenses.length === 0 && !!q.unsure, 'a should-I question with no price goes to Gemini', q.reply)
+  const eggs = runCommand(base, 'i have 2 eggs left', now, emptyMemory())
+  check(eggs.state.expenses.length === 0 && !eggs.memory.wallet, '"i have 2 eggs left" is neither cash nor spending', eggs.reply)
+}
+
 if (failed) {
   console.error(`\n${failed} phrasing check(s) failed`)
   process.exit(1)

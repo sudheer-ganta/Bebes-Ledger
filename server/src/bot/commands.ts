@@ -1132,7 +1132,10 @@ function handle(state: AppState, input: string, now: Date): BotResult {
   }
 
   // ---- cash in hand: "i have 400 in wallet", "wallet 400", "cash left 400", "400 left in my wallet", "only 400 cash"
-  const walletSay = /\b(wallet|purse|in hand|cash|pocket|on me)\b/.test(norm) && /\b(have|got|left|remaining|bacha|bache|only|hai|is|wallet|cash)\b/.test(norm)
+  // ...and "i have 400 left for until pay day", "only 400 left till salary", "400 bacha hai month end tak"
+  const walletSay = (/\b(wallet|purse|in hand|cash|pocket|on me)\b/.test(norm) && /\b(have|got|left|remaining|bacha|bache|only|hai|is|wallet|cash)\b/.test(norm)) ||
+    /^(i\s+)?(have|got|only have|have only|am left with)\s+(only\s+)?(₹|rs\.?\s*)?\d[\d,]*\s*(rs|₹|rupees)?\s*(left|remaining|more)?\b/.test(norm) ||
+    /\d\s*(rs|₹|rupees)?\s+(left|remaining|bacha|bache)\b.*\b(till|until|for|before|tak)\b.*\b(pay ?day|payday|salary|month|end)\b/.test(norm)
   if (!strictQuestion && firstMoney && walletSay && !/\b(spent|paid|bought|gave|took|borrowed|withdrew|withdraw)\b/.test(norm) && !isPlan) {
     setWallet(firstMoney, now, state)
     const fv = computeFinance(state, today)
@@ -1186,8 +1189,12 @@ function handle(state: AppState, input: string, now: Date): BotResult {
         ? `No, darling. ${fmt(want)} is more than the ${fmt(w.left)} cash you have, and payday is ${days} days away.`
         : `${fmt(want)} leaves ${fmt(after)} cash for ${days} days, about ${fmt(after / days)} a day. ${after / days >= 30 ? `Doable, ${name}. Food first.` : `Tight, ${name}. Only if it's food or truly needed.`}\nI haven't logged it. Tell me when you've actually bought it.`)
     }
+    // "should i get ? or should i skip the full tray": a judgement call with no price is Gemini's (it sees the chat)
+    if (want === null && (text.split(/\s+/).length > 6 || /\b(or|skip|instead|better)\b/.test(norm))) {
+      return { ...noChange(`Tell me the price, ${name}, and I'll rule on it.\n${brokeStatus(state, today)}`), unsure: true }
+    }
     if (m.fv.pending) {
-      return noChange(`Afford it? With what, darling? ${want ? `${fmt(want)} is a fantasy until payday.` : 'We are a woman of means without the means.'}\n${brokeStatus(state, today)}`)
+      return noChange(`Afford it? With what, darling? ${want ? `${fmt(want)} is a fantasy until payday.` : 'We are a woman of means without the means.'}\n${brokeStatus(state, today)}${w ? '' : `\nTell me your cash ("i have 400 left till payday") and I'll judge against it.`}`)
     }
     if (want === null) {
       return noChange(`You have ${fmt(Math.max(0, m.left))} left today${m.week !== null ? ` and ${fmt(Math.max(0, m.week))} this week` : ''}${isOuting && fun !== null ? `; the weekend fund holds ${fmt(fun)}` : ''}. Tell me the price, ${name}, and I'll rule on it.`)
@@ -1241,7 +1248,8 @@ function handle(state: AppState, input: string, now: Date): BotResult {
   const amountIdx = tokens.findIndex(isPriceAt)
   // not spending at all: who you are, asking for something, salary talk
   // ...or a correction of an old one ("uber 120 not 112"), which is never a new expense
-  const notSpending = /\b(i am|i'm|im|age|years old|give me|lend me|send me|salary|paycheck)\b|\bnot\s+(₹|rs\.?\s*)?\d/.test(lower)
+  // "i have 400 left" is what you've got, never what you spent
+  const notSpending = /\b(i am|i'm|im|age|years old|give me|lend me|send me|salary|paycheck)\b|\bnot\s+(₹|rs\.?\s*)?\d|^(i\s+)?(have|got|only have)\s+(only\s+)?(₹|rs\.?\s*)?\d|\b\d+\s*(left|remaining)\b/.test(lower)
   // short messages with a price are expenses; longer ones need a money word ("spent", "gave", "₹")
   const looksLikeExpense =
     amountIdx >= 0 && (isExpenseWord || tokens.length <= 5 || MONEY_VERB.test(lower)) &&
